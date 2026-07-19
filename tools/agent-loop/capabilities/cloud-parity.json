@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "dotnet": true,
-    "node": true
-  },
-  "gitBridge": "auto",
-  "id": "cloud-parity",
-  "verifyPlane": "container"
-}

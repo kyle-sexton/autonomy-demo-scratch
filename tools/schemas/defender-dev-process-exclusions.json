@@ -1,9 +1,0 @@
-{
-  "dotnetUnderProgramFiles": true,
-  "processNames": [
-    "MSBuild.exe",
-    "VBCSCompiler.exe",
-    "testhost.exe",
-    "vstest.console.exe"
-  ]
-}
