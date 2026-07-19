@@ -1,0 +1,24 @@
+{
+  "_doc": "Maps catalogNamespace to registry, cache paths, and optional Tier-0 list-models command.",
+  "cursor": {
+    "registryFile": "cursor-models.registry.json",
+    "catalogFile": "cache/cursor-catalog.json",
+    "metaFile": "cache/cursor-catalog.meta.json",
+    "listModelsCommand": "cursor-agent --list-models",
+    "listModelsLinePattern": "^[a-z0-9]"
+  },
+  "codex": {
+    "registryFile": "codex-models.registry.json",
+    "catalogFile": "cache/codex-catalog.json",
+    "metaFile": "cache/codex-catalog.meta.json",
+    "listModelsCommand": "",
+    "listModelsLinePattern": ""
+  },
+  "claude": {
+    "registryFile": "claude-models.registry.json",
+    "catalogFile": "",
+    "metaFile": "",
+    "listModelsCommand": "",
+    "listModelsLinePattern": ""
+  }
+}

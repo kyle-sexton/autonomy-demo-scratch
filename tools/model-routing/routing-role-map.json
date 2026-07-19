@@ -1,0 +1,91 @@
+{
+  "_doc": "Medley-owned role hints per catalog namespace. Maps to catalogModelId at authoring/apply time.",
+  "roles": {
+    "cursor": {
+      "plan-tier": {
+        "pool": "api",
+        "catalogModelId": "claude-opus-4-8",
+        "variant": "xhigh"
+      },
+      "implement-default": {
+        "pool": "composer",
+        "catalogModelId": "cursor-composer-2-5",
+        "variant": "fast"
+      },
+      "verify-tier": {
+        "pool": "api",
+        "catalogModelId": "gpt-5-5",
+        "variant": "high",
+        "crossVendorFrom": "implement-default"
+      }
+    },
+    "codex": {
+      "plan-tier": {
+        "pool": "api",
+        "catalogModelId": "gpt-5-5",
+        "variant": "high"
+      },
+      "implement-default": {
+        "pool": "api",
+        "catalogModelId": "gpt-5-3-codex",
+        "variant": ""
+      },
+      "verify-tier": {
+        "pool": "api",
+        "catalogModelId": "gpt-5-5",
+        "variant": "high",
+        "crossVendorFrom": "implement-default"
+      }
+    },
+    "claude": {
+      "plan-tier": {
+        "pool": "api",
+        "catalogModelId": "opus",
+        "variant": ""
+      },
+      "implement-default": {
+        "pool": "api",
+        "catalogModelId": "sonnet",
+        "variant": ""
+      },
+      "verify-tier": {
+        "pool": "api",
+        "catalogModelId": "opus",
+        "variant": "",
+        "crossVendorFrom": "implement-default"
+      }
+    }
+  },
+  "complexityFallback": {
+    "standard": "implement-default",
+    "elevated": "plan-tier",
+    "frontier": "plan-tier"
+  },
+  "surfaceAliases": {
+    "agent-loop-cursor": {
+      "surfaceClass": "headless-loop",
+      "tool": "cursor",
+      "catalogNamespace": "cursor",
+      "syncScript": "sync-cursor-catalog.sh",
+      "runLocalPath": "tools/agent-loop/run.local.json"
+    },
+    "agent-loop-codex": {
+      "surfaceClass": "headless-loop",
+      "tool": "codex",
+      "catalogNamespace": "codex",
+      "syncScript": "sync-codex-catalog.sh",
+      "runLocalPath": "tools/agent-loop/run.local.json"
+    },
+    "interactive": {
+      "surfaceClass": "interactive",
+      "tool": "cursor",
+      "catalogNamespace": "cursor",
+      "syncScript": "sync-cursor-catalog.sh"
+    },
+    "cc-goal": {
+      "surfaceClass": "goal-loop",
+      "tool": "claude-code",
+      "catalogNamespace": "claude"
+    }
+  }
+}

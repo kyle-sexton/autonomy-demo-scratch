@@ -1,0 +1,19 @@
+{
+  "name": "@melodic/repo-analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared git-repo structure, framework, and section-diff analysis used by the course-digest and youtube extraction backends",
+  "exports": {
+    ".": "./repo-analysis.js"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.2"
+  }
+}

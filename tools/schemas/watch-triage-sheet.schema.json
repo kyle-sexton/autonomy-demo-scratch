@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medley.local/schemas/watch-triage-sheet.json",
+  "title": "YouTube watch triage sheet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sheetId", "reviewedAt", "cells"],
+  "properties": {
+    "sheetId": {
+      "type": "string",
+      "pattern": "^sheet_\\d{3}$"
+    },
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 10
+    },
+    "model": {
+      "type": "string"
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cell", "frame", "verdict"],
+        "properties": {
+          "cell": {
+            "type": "string",
+            "pattern": "^R[1-4]C[1-4]$"
+          },
+          "frame": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "keep-detail",
+              "promote-key-frame",
+              "duplicate",
+              "blur",
+              "talking-head-only",
+              "skip"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

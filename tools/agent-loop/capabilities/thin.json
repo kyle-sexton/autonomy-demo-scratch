@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "dotnet": false,
+    "node": false
+  },
+  "gitBridge": "auto",
+  "id": "thin",
+  "verifyPlane": "host"
+}

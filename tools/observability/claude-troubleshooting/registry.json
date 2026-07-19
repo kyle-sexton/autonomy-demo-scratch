@@ -1,0 +1,1304 @@
+{
+  "version": 1,
+  "schema_notes": "All Claude product GitHub issues tracked across the repo. Updated by /claude-troubleshooting search, scan, and check-all actions. Source of truth for issue status \u2014 other files reference /claude-troubleshooting, not individual issues.",
+  "issues": [
+    {
+      "number": 15840,
+      "repo": "anthropics/claude-code",
+      "title": "CLAUDE_ENV_FILE not provided to SessionStart hooks",
+      "url": "https://github.com/anthropics/claude-code/issues/15840",
+      "category": "informational",
+      "status": "closed",
+      "feature": "CLAUDE_ENV_FILE",
+      "impact": "DISPROVEN: CLAUDE_ENV_FILE works correctly (verified CC 2.1.165) \u2014 it is a populated path and append (export KEY=value >> the file) persists across hook invocations. Original empty-string report closed not_planned by Anthropic 2026-04-09.",
+      "workaround": "None needed \u2014 CLAUDE_ENV_FILE functions as documented (see hooks/session-mode.md). XDG state-path keying remains valid for state that must survive --resume, but is not required to work around this issue.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": "Hook configuration externalization via env vars",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-04-09"
+    },
+    {
+      "number": 19357,
+      "repo": "anthropics/claude-code",
+      "title": "Contradiction in CLAUDE_ENV_FILE definition between Settings and Hooks documentation",
+      "url": "https://github.com/anthropics/claude-code/issues/19357",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-02-28",
+      "feature": "CLAUDE_ENV_FILE",
+      "impact": "Documentation contradicts actual behavior \u2014 confusing for hook developers",
+      "workaround": "See #15840 workaround",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 21022,
+      "repo": "anthropics/claude-code",
+      "title": "Claude Code hangs when accessing large session files (>50MB)",
+      "url": "https://github.com/anthropics/claude-code/issues/21022",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Session transcript JSONL",
+      "impact": "Parsing transcript files in hooks causes hangs on long sessions",
+      "workaround": "Do not parse transcript in real-time hooks \u2014 use state files instead",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": "Transcript-based workflow enforcement",
+      "last_checked": "2026-05-05",
+      "added": "2026-03-24",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 29881,
+      "repo": "anthropics/claude-code",
+      "title": "Stop hook not firing mid-session reliably",
+      "url": "https://github.com/anthropics/claude-code/issues/29881",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Stop hook event",
+      "impact": "Stop hooks may only fire at session termination, not on every end_turn",
+      "workaround": "Use Stop as defense-in-depth, not primary enforcement. PreToolUse advisor is primary.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": "Reliable verification-before-completion enforcement",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-01"
+    },
+    {
+      "number": 34713,
+      "repo": "anthropics/claude-code",
+      "title": "False 'Hook Error' labels cause Claude to prematurely end turns",
+      "url": "https://github.com/anthropics/claude-code/issues/34713",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Hook execution feedback",
+      "impact": "Successful hooks show error labels \u2014 Claude may prematurely abandon work",
+      "workaround": "Hooks that should be invisible must produce ZERO stdout/stderr on success",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-31"
+    },
+    {
+      "number": 16047,
+      "repo": "anthropics/claude-code",
+      "title": "Hooks stop executing after ~2.5 hours in session",
+      "url": "https://github.com/anthropics/claude-code/issues/16047",
+      "category": "degraded",
+      "status": "closed",
+      "stateReason": "COMPLETED",
+      "closedAt": "2026-01-04",
+      "feature": "Hook execution lifecycle",
+      "impact": "All hooks silently stop firing after ~2.5h \u2014 no error, no notification. Possibly fixed.",
+      "workaround": "Design hooks to degrade gracefully when they stop firing",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 19377,
+      "repo": "anthropics/claude-code",
+      "title": "Glob patterns in rules files frontmatter silently fail",
+      "url": "https://github.com/anthropics/claude-code/issues/19377",
+      "category": "blocking",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-03-19",
+      "feature": "Rules file glob scoping",
+      "impact": "YAML array globs in .claude/rules/*.md frontmatter don't filter \u2014 all rules load unconditionally",
+      "workaround": "Accept unconditional loading. Token cost is low.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        "CLAUDE.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping",
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 14259,
+      "repo": "anthropics/claude-code",
+      "title": "PrePlanMode and PostPlanMode Hook Events",
+      "url": "https://github.com/anthropics/claude-code/issues/14259",
+      "category": "feature-request",
+      "status": "open",
+      "feature": "Plan mode hook events",
+      "impact": "Cannot track or enforce plan mode entry/exit via hooks",
+      "workaround": "None \u2014 plan enforcement is advisory only via CLAUDE.md instructions",
+      "affected_files": [],
+      "blocked_work": "Plan step enforcement via hooks",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 8961,
+      "repo": "anthropics/claude-code",
+      "title": "Deny rules in settings.local.json are not enforced",
+      "url": "https://github.com/anthropics/claude-code/issues/8961",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Permission deny rules",
+      "impact": "Deny rules in settings.local.json silently ignored \u2014 only settings.json and user-level settings enforce",
+      "workaround": "Place all deny rules in settings.json (project-level, checked in)",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/settings.json"
+      ],
+      "blocked_work": "Splitting deny rules between shared and personal settings",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 16853,
+      "repo": "anthropics/claude-code",
+      "title": "Path-scoped rules not automatically loaded when working with matching files",
+      "url": "https://github.com/anthropics/claude-code/issues/16853",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Rules file path scoping",
+      "impact": "Rules in .claude/rules/ subdirectories with paths: frontmatter never load \u2014 not even when reading matching files. 10 comments, has repro label.",
+      "workaround": "Accept unconditional loading for flat .claude/rules/ files. Avoid subdirectories.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "related": [
+        16299,
+        17204,
+        19377,
+        38487,
+        32906
+      ]
+    },
+    {
+      "number": 17204,
+      "repo": "anthropics/claude-code",
+      "title": "Rules frontmatter format incorrect \u2014 globs works, paths with YAML list does not",
+      "url": "https://github.com/anthropics/claude-code/issues/17204",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Rules file path scoping",
+      "impact": "CSV parser bug \u2014 paths: with YAML arrays fail. Official docs show YAML arrays but parser expects CSV.",
+      "workaround": "Accept unconditional loading. Use paths: with YAML arrays (documented format) for future-proofing.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "related": [
+        16299,
+        16853,
+        19377,
+        38487,
+        32906
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-16"
+    },
+    {
+      "number": 26868,
+      "repo": "anthropics/claude-code",
+      "title": "Claude Code CLI paths handling in .claude/rules/*.md",
+      "url": "https://github.com/anthropics/claude-code/issues/26868",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Rules file glob scoping",
+      "impact": "Related to #19377 \u2014 glob scoping doesn't work",
+      "workaround": "Same as #19377",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "COMPLETED",
+      "closedAt": "2026-04-09"
+    },
+    {
+      "number": 15562,
+      "repo": "anthropics/claude-code",
+      "title": "Support cross-platform MCP configuration in plugins",
+      "url": "https://github.com/anthropics/claude-code/issues/15562",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-02-14",
+      "feature": "Cross-platform MCP",
+      "impact": "No shell:true support for npx-based MCP servers on Windows",
+      "workaround": "mcp-launcher.js at tools/mcp-launcher/launcher.js",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 11731,
+      "repo": "anthropics/claude-code",
+      "title": "Cross-platform .mcp.json project files",
+      "url": "https://github.com/anthropics/claude-code/issues/11731",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-01-18",
+      "feature": "Cross-platform MCP",
+      "impact": "Related to #15562 \u2014 npx MCP on Windows",
+      "workaround": "Same as #15562",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 9594,
+      "repo": "anthropics/claude-code",
+      "title": "Windows: MCP servers using npx require cmd /c wrapper",
+      "url": "https://github.com/anthropics/claude-code/issues/9594",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2025-10-15",
+      "feature": "Cross-platform MCP",
+      "impact": "Original report of npx MCP failure on Windows",
+      "workaround": "Same as #15562",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 36808,
+      "repo": "anthropics/claude-code",
+      "title": "MCP Server Connection Fails on Windows \u2014 cmd /c wrapper corrupted by CLI parser",
+      "url": "https://github.com/anthropics/claude-code/issues/36808",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Cross-platform MCP",
+      "impact": "npx MCP servers fail on Windows without wrapper",
+      "workaround": "mcp-launcher.js at tools/mcp-launcher/launcher.js",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Removing mcp-launcher.js workaround",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-04-25"
+    },
+    {
+      "number": 37634,
+      "repo": "anthropics/claude-code",
+      "title": "Native installer: bash hooks resolve to WSL bash.exe instead of Git Bash",
+      "url": "https://github.com/anthropics/claude-code/issues/37634",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Hook execution on Windows",
+      "impact": "Bash scripts resolve to WSL instead of Git Bash on native installer",
+      "workaround": "mcp-launcher.js uses Node.js instead of bash to avoid this",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24",
+      "stateReason": "DUPLICATE",
+      "closedAt": "2026-03-26"
+    },
+    {
+      "number": 1254,
+      "repo": "anthropics/claude-code",
+      "title": "Environment variables from env section not passed to MCP servers",
+      "url": "https://github.com/anthropics/claude-code/issues/1254",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-01-19",
+      "feature": "MCP env block",
+      "impact": "MCP env block may strip process.env \u2014 PATH killed for bash but not node",
+      "workaround": "mcp-launcher.js uses Node.js (already resolved by spawn)",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 14353,
+      "repo": "anthropics/claude-code",
+      "title": "MCP tools running sequentially instead of in parallel",
+      "url": "https://github.com/anthropics/claude-code/issues/14353",
+      "category": "informational",
+      "status": "open",
+      "feature": "MCP tool concurrency",
+      "impact": "Tools to same MCP server serialize unless readOnlyHint:true \u2014 by design, not a bug",
+      "workaround": "Add readOnlyHint:true to read-only tools for parallel execution",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 23869,
+      "repo": "anthropics/claude-code",
+      "title": "Permission auto-save uses deprecated colon syntax",
+      "url": "https://github.com/anthropics/claude-code/issues/23869",
+      "category": "cosmetic",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-03-07",
+      "feature": "Permission auto-save",
+      "impact": "Saves Bash(cmd:*) instead of Bash(cmd *) \u2014 cosmetic, both work",
+      "workaround": "Periodically convert colon-syntax entries to space syntax in settings files",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 11795,
+      "repo": "anthropics/claude-code",
+      "title": "Link to JSON Schema for settings.json in official docs",
+      "url": "https://github.com/anthropics/claude-code/issues/11795",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-02-28",
+      "feature": "Settings JSON schema",
+      "impact": "$schema field works; docs just don't mention it. Confirmed safe.",
+      "workaround": "None needed \u2014 $schema works correctly",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 19141,
+      "repo": "anthropics/claude-code",
+      "title": "Clarify distinction between user-invocable and disable-model-invocation in Skills",
+      "url": "https://github.com/anthropics/claude-code/issues/19141",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "COMPLETED",
+      "closedAt": "2026-01-20",
+      "feature": "Skill frontmatter",
+      "impact": "Documentation clarified \u2014 behavior now documented",
+      "workaround": "None needed",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-03-24",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 37521,
+      "repo": "anthropics/claude-code",
+      "title": "Agent/subagent freezes indefinitely on Opus 4.6 \u2014 no timeout, no error, no recovery",
+      "url": "https://github.com/anthropics/claude-code/issues/37521",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Agent/subagent execution",
+      "impact": "Agents freeze indefinitely with no timeout, error, or recovery. Observed on Opus 4.6. Increasing in frequency (March 2026).",
+      "workaround": "Retry the agent. If stuck, cancel and re-prompt. No programmatic workaround.",
+      "affected_files": [],
+      "blocked_work": "Reliable parallel agent workflows",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-25",
+      "related": [
+        36195,
+        33073
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-23"
+    },
+    {
+      "number": 36195,
+      "repo": "anthropics/claude-code",
+      "title": "Multiple parallel foreground agents freeze after ~15-30 min, unblock on ctrl+b",
+      "url": "https://github.com/anthropics/claude-code/issues/36195",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Agent/subagent execution",
+      "impact": "Parallel foreground agents freeze after 15-30 minutes of execution",
+      "workaround": "Ctrl+b to move frozen agents to background (unblocks them)",
+      "affected_files": [],
+      "blocked_work": "Reliable parallel agent workflows",
+      "last_checked": "2026-05-05",
+      "added": "2026-03-25",
+      "related": [
+        37521,
+        33073
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 33073,
+      "repo": "anthropics/claude-code",
+      "title": "PreToolUse hooks cause agent hang after ToolSearch deferred tool loading",
+      "url": "https://github.com/anthropics/claude-code/issues/33073",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Agent/subagent execution",
+      "impact": "PreToolUse hooks can cause agent hangs specifically after ToolSearch loads deferred tools. Directly relevant to repos with custom hooks.",
+      "workaround": "None known \u2014 design hooks to be fast and avoid interacting with ToolSearch",
+      "affected_files": [
+        "guardrails plugin hardcoded-path-check hook (melodic-software/claude-code-plugins)",
+        "guardrails plugin block-no-verify hook (melodic-software/claude-code-plugins)"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-05-05",
+      "added": "2026-03-25",
+      "related": [
+        37521,
+        36195
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 38847,
+      "repo": "anthropics/claude-code",
+      "title": "Voice push-to-talk regression: Space key scrolls indefinitely and recording captures no audio (v2.1.83)",
+      "url": "https://github.com/anthropics/claude-code/issues/38847",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Voice mode (/voice)",
+      "impact": "Hold Space types spaces instead of activating recording. When recording eventually activates, no audio is captured. Regression from v2.1.81. Affects Windows, macOS, and Linux \u2014 cross-platform breakage.",
+      "workaround": "None \u2014 voice mode is unusable in v2.1.83. Type prompts manually. Downgrade to v2.1.81 if voice is critical.",
+      "affected_files": [],
+      "blocked_work": "Voice input for Claude Code",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-25",
+      "related": [
+        38577,
+        38846,
+        38620,
+        35156,
+        38924
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-22"
+    },
+    {
+      "number": 19471,
+      "repo": "anthropics/claude-code",
+      "title": "CLAUDE.md instructions completely ignored after context compaction",
+      "url": "https://github.com/anthropics/claude-code/issues/19471",
+      "category": "degraded",
+      "status": "open",
+      "feature": "Context compaction",
+      "impact": "CLAUDE.md and rules may not auto-reload after compaction",
+      "workaround": "SessionStart compact hook reinjects critical context",
+      "affected_files": [
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-03-24"
+    },
+    {
+      "number": 16299,
+      "repo": "anthropics/claude-code",
+      "title": "Path-scoped rules in .claude/rules/ load into context globally regardless of paths: frontmatter",
+      "url": "https://github.com/anthropics/claude-code/issues/16299",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Rules file path scoping",
+      "impact": "All .md files in .claude/rules/ load at session start regardless of paths: configuration. Opposite of #16853 (which is about subdirectory rules never loading).",
+      "workaround": "Accept unconditional loading. Token cost is acceptable.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        "CLAUDE.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping (reducing token cost)",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-25",
+      "related": [
+        16853,
+        17204,
+        19377,
+        38487,
+        32906
+      ]
+    },
+    {
+      "number": 38487,
+      "repo": "anthropics/claude-code",
+      "title": "Path-scoped rules should load when Write/Edit targets a matching path",
+      "url": "https://github.com/anthropics/claude-code/issues/38487",
+      "category": "feature-request",
+      "status": "closed",
+      "feature": "Rules file path scoping",
+      "impact": "Path-scoped rules only load on Read, not Write/Edit \u2014 new file creation ignores scoped rules",
+      "workaround": "Accept unconditional loading so rules are always present",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping",
+      "last_checked": "2026-05-05",
+      "added": "2026-03-25",
+      "related": [
+        16299,
+        16853,
+        17204,
+        19377,
+        32906
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 32906,
+      "repo": "anthropics/claude-code",
+      "title": "Path-specific rules do not load in subagents, teammates, or skill-forked contexts",
+      "url": "https://github.com/anthropics/claude-code/issues/32906",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Rules file path scoping",
+      "impact": "Spawned contexts (subagent, teammate, skill-forked) only see global rules \u2014 path-scoped rules never trigger",
+      "workaround": "Accept unconditional loading so all rules are global and visible to subagents",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-ecosystem rules scoping in agent workflows",
+      "last_checked": "2026-05-05",
+      "added": "2026-03-25",
+      "related": [
+        16299,
+        16853,
+        17204,
+        19377,
+        38487
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 30266,
+      "repo": "anthropics/claude-code",
+      "title": "Feature request: Invoke statusline command on session start before first assistant response",
+      "url": "https://github.com/anthropics/claude-code/issues/30266",
+      "category": "feature-request",
+      "status": "closed",
+      "feature": "Statusline",
+      "impact": "Statusline area is blank on session start until first assistant response \u2014 users think their statusline is broken",
+      "workaround": "None \u2014 by design. Script handles null values gracefully so partial data displays once first render fires",
+      "affected_files": [],
+      "blocked_work": null,
+      "last_checked": "2026-05-05",
+      "added": "2026-03-28",
+      "related": [
+        37129
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 37129,
+      "repo": "anthropics/claude-code",
+      "title": "Statusline missing rate_limits and context_window on initial render",
+      "url": "https://github.com/anthropics/claude-code/issues/37129",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Statusline",
+      "impact": "Initial statusline render (when it does fire) omits rate_limits and context_window \u2014 only version, model, workspace, and cost are populated",
+      "workaround": "Script handles missing fields with jq // 0 defaults \u2014 displays partial info until full data arrives after first interaction",
+      "affected_files": [],
+      "blocked_work": null,
+      "last_checked": "2026-05-05",
+      "added": "2026-03-28",
+      "related": [
+        30266
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 16600,
+      "repo": "anthropics/claude-code",
+      "title": "Claude Code memory traversal should respect git worktree boundaries",
+      "url": "https://github.com/anthropics/claude-code/issues/16600",
+      "category": "degraded",
+      "status": "open",
+      "feature": "Rules/CLAUDE.md traversal in worktrees",
+      "impact": "Worktrees nested under .claude/worktrees/ cause parent directory traversal to find the main repo's .claude/rules/ in addition to the worktree's own copy. Every rule file loads twice \u2014 2x context overhead on every tool call. With path-scoped re-injection (#32057), duplicated rules are injected repeatedly throughout the session.",
+      "workaround": "None \u2014 worktree directory location is hardcoded by CC. Accept the duplication. Impact is context waste, not incorrect behavior (content is identical).",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Efficient context usage in worktree sessions",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-29",
+      "related": [
+        34209,
+        32057
+      ]
+    },
+    {
+      "number": 34209,
+      "repo": "anthropics/claude-code",
+      "title": "Allow projects to exclude inherited .claude/rules/ from parent directories",
+      "url": "https://github.com/anthropics/claude-code/issues/34209",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Rules inheritance/traversal control",
+      "impact": "No mechanism to exclude inherited rules from parent directories. Monorepo and worktree setups load rules from every ancestor .claude/rules/. Quantified: 24-36% wasted context in multi-language setups.",
+      "workaround": "None for worktrees (path is hardcoded). For monorepos: move rules outside .claude/rules/ in ancestors.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Per-project rule isolation in monorepos and worktrees",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-29",
+      "related": [
+        16600,
+        32057,
+        20880,
+        29915
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-25"
+    },
+    {
+      "number": 32057,
+      "repo": "anthropics/claude-code",
+      "title": "Rules re-injected as system-reminders on every tool call, consuming ~46% of context window",
+      "url": "https://github.com/anthropics/claude-code/issues/32057",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Rules loading/caching",
+      "impact": "Rules with paths: frontmatter are re-injected as system-reminder blocks on every tool result, not loaded once. In a 30-tool-call session, this consumed ~93K tokens (46% of 200K context). Combined with #16600 (worktree double-loading), the multiplier is severe.",
+      "workaround": "Accept unconditional loading. Keep rule files concise. The token cost compounds with worktree duplication (#16600).",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Efficient context usage with scoped rules",
+      "last_checked": "2026-06-09",
+      "added": "2026-03-29",
+      "related": [
+        16600,
+        34209,
+        16299
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-25"
+    },
+    {
+      "number": 43530,
+      "repo": "anthropics/claude-code",
+      "title": "Notification hook fires ~8 seconds after permission prompt appears",
+      "url": "https://github.com/anthropics/claude-code/issues/43530",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Notification hook event",
+      "impact": "Notification hooks fire with ~8s delay after permission prompt. On Windows CLI, firing is intermittent. Desktop notifications unreliable for real-time alerting.",
+      "workaround": "Accept intermittent or delayed notifications; this is CC's event-emission timing. The hook script runs when the event fires, and terminal channels (BELL + OSC 9) carry the alert. No user-side fix.",
+      "affected_files": [
+        "desktop-notification plugin hook (melodic-software/claude-code-plugins)",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": "Reliable desktop notification workflow",
+      "last_checked": "2026-05-05",
+      "added": "2026-04-04",
+      "related": [
+        42487,
+        35541,
+        28774
+      ],
+      "stateReason": "DUPLICATE",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 42487,
+      "repo": "anthropics/claude-code",
+      "title": "Notification hook not triggered in Plan Mode when AskUserQuestion is called",
+      "url": "https://github.com/anthropics/claude-code/issues/42487",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Notification hook event",
+      "impact": "Notification hook does not fire in Plan Mode on Windows. Stop hook works, Notification does not.",
+      "workaround": "None for Plan Mode. Only affects Plan Mode.",
+      "affected_files": [
+        "desktop-notification plugin hook (melodic-software/claude-code-plugins)",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-04",
+      "related": [
+        43530,
+        35541,
+        28774
+      ],
+      "stateReason": "DUPLICATE",
+      "closedAt": "2026-04-06"
+    },
+    {
+      "number": 35541,
+      "repo": "anthropics/claude-code",
+      "title": "Notification hook not firing in Claude Desktop",
+      "url": "https://github.com/anthropics/claude-code/issues/35541",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Notification hook event",
+      "impact": "Notification hook does not fire in Claude Desktop app. Works in terminal CLI.",
+      "workaround": "Use terminal CLI instead of Desktop app for notification hooks",
+      "affected_files": [
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-04",
+      "related": [
+        43530,
+        42487,
+        28774
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-04-15"
+    },
+    {
+      "number": 41365,
+      "repo": "anthropics/claude-code",
+      "title": "initialPrompt not auto-submitted when using --agent flag",
+      "url": "https://github.com/anthropics/claude-code/issues/41365",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "initialPrompt",
+      "impact": "Agent YAML frontmatter `initialPrompt` does not fire when starting session via `claude --agent <name>`; session opens at `>` prompt with no auto-submitted turn. Feature shipped in v2.1.83 docs but never actually functions.",
+      "workaround": "Pass the prompt as a positional argument: `claude --agent <name> \"<prompt>\"` \u2014 functionally different (one-shot, no auto-prepend on every session start).",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Evaluation of `initialPrompt` for future main-session agent use cases (scheduled runners, cloud headless sessions, autonomous E2E orchestrators \u2014 all tracked in #250).",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-20",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-27"
+    },
+    {
+      "number": 25642,
+      "repo": "anthropics/claude-code",
+      "title": "Feature request: Expose session ID as $CLAUDE_SESSION_ID environment variable",
+      "url": "https://github.com/anthropics/claude-code/issues/25642",
+      "category": "feature-request",
+      "status": "closed",
+      "feature": "hook env vars",
+      "impact": "Anthropic shipped CLAUDE_CODE_SESSION_ID (with _CODE_ infix) in Bash subprocess as of v2.1.132+; bare CLAUDE_SESSION_ID name still does NOT exist. /en/env-vars docs page still missing the entry as of v2.1.146 (2026-05-20). Hooks/scripts using bare ${CLAUDE_SESSION_ID} get empty string",
+      "workaround": "Use ${CLAUDE_CODE_SESSION_ID} (with _CODE_ infix) in Bash subprocess. Doc gap tracked in melodic-software/medley#851. Hook subprocess availability varies by CC version \u2014 verify with env grep first",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md",
+        ".claude/rules/hooks/quirks.md"
+      ],
+      "blocked_work": "Simpler hook state keying (still blocked because stdin .session_id drifts mid-session per #12235)",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "stateReason": "COMPLETED",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 44607,
+      "repo": "anthropics/claude-code",
+      "title": "No way to access session ID from within a running session",
+      "url": "https://github.com/anthropics/claude-code/issues/44607",
+      "category": "informational",
+      "status": "closed",
+      "stateReason": "NOT_PLANNED",
+      "feature": "hook env vars",
+      "impact": "Duplicate of #25642 \u2014 same request, closed",
+      "workaround": "See #25642",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-04-23",
+      "added": "2026-04-23"
+    },
+    {
+      "number": 12235,
+      "repo": "anthropics/claude-code",
+      "title": "Session ID changes when resuming a conversation via --resume",
+      "url": "https://github.com/anthropics/claude-code/issues/12235",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "--resume",
+      "impact": "Integrations tracking sessions by session_id break across --resume",
+      "workaround": "Do not key on session_id. Use CLAUDE_PROJECT_DIR + git branch as the stable identity for any integration that must survive --resume.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/rules/hooks/conventions.md"
+      ],
+      "blocked_work": "Session-identity-based external integrations",
+      "last_checked": "2026-05-05",
+      "added": "2026-04-23",
+      "stateReason": "DUPLICATE",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 34692,
+      "repo": "anthropics/claude-code",
+      "title": "PreToolUse/PostToolUse hooks do not fire for subagent (Agent tool) tool calls",
+      "url": "https://github.com/anthropics/claude-code/issues/34692",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "hooks + subagents",
+      "impact": "Compliance/safety hooks silently bypass subagent work. Read-only audit hooks miss subagent activity",
+      "workaround": "Do not rely on PreToolUse/PostToolUse enforcement for subagent calls. Our 5 agents are read-only so this is informational for us",
+      "affected_files": [
+        ".claude/rules/hooks/conventions.md",
+        ".claude/rules/worktree/worktree-setup.md"
+      ],
+      "blocked_work": "Policy enforcement via hooks for Agent-tool work",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-30"
+    },
+    {
+      "number": 38713,
+      "repo": "anthropics/claude-code",
+      "title": "Feature request: Dedicated ~/.claude/tmp/ directory with session-scoped temp file management",
+      "url": "https://github.com/anthropics/claude-code/issues/38713",
+      "category": "feature-request",
+      "status": "closed",
+      "feature": "cloud sessions / temp files",
+      "impact": "Cloud container /tmp lifecycle can evict files written there mid-session",
+      "workaround": "If a hook needs persistence, write to the XDG state path (${XDG_STATE_HOME:-$HOME/.local/state}/medley/ on Linux/macOS, %LOCALAPPDATA%\\medley\\ on Windows) \u2014 not /tmp.",
+      "affected_files": [
+        ".claude/rules/cloud-conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "stateReason": "COMPLETED",
+      "closedAt": "2026-03-25"
+    },
+    {
+      "number": 15700,
+      "repo": "anthropics/claude-code",
+      "title": "Background tasks ignore $TMPDIR and hardcode /tmp/claude/",
+      "url": "https://github.com/anthropics/claude-code/issues/15700",
+      "category": "degraded",
+      "status": "open",
+      "feature": "background tasks / tmpdir",
+      "impact": "$TMPDIR environment override is ignored for background task state",
+      "workaround": "Do not rely on $TMPDIR for background-task scratch paths. CC writes background-task output to a fixed location and surfaces it via the completion notification \u2014 Read that path directly.",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23"
+    },
+    {
+      "number": 30922,
+      "repo": "anthropics/claude-code",
+      "title": "claude --remote cloud sessions orphaned",
+      "url": "https://github.com/anthropics/claude-code/issues/30922",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "cloud sessions",
+      "impact": "Cloud sessions may disappear mid-session without warning",
+      "workaround": "No user-side workaround. Push commits to origin frequently so work survives the session, and prefer interactive sessions for long arcs.",
+      "affected_files": [
+        ".claude/rules/cloud-conventions.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-04-03"
+    },
+    {
+      "number": 28554,
+      "repo": "anthropics/claude-code",
+      "title": "Cannot uninstall plugin: enabledPlugins false ignored, plugin re-installs every session",
+      "url": "https://github.com/anthropics/claude-code/issues/28554",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Plugin uninstall / enabledPlugins",
+      "impact": "enabledPlugins: false is partially honored; removing entries from installed_plugins.json is reverted every session. Confirmed for document-skills@anthropic-agent-skills and playwright@claude-plugins-official.",
+      "workaround": "Accept /doctor noise for disabled-but-registered plugins. Never run 'claude plugin marketplace remove' (cascade-purges enabledPlugins per claude-code-quirks.md).",
+      "affected_files": [
+        ".claude/rules/claude-code-quirks.md",
+        ".claude/skills/onboard/scripts/check-plugins.sh"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "related": [
+        9537,
+        27247,
+        19893
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-19"
+    },
+    {
+      "number": 48736,
+      "repo": "anthropics/claude-code",
+      "title": "/plugin marketplace add: failed clone pollutes local cache and blocks retries",
+      "url": "https://github.com/anthropics/claude-code/issues/48736",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Plugin marketplace clone",
+      "impact": "Failed marketplace or submodule clone leaves temp_git_* directory, blocking retries. Affects cockroachdb@claude-plugins-official.",
+      "workaround": "Manually delete stale temp_git_* dirs under ~/.claude/plugins/cache/. fix-plugins.sh step 4 handles it automatically.",
+      "affected_files": [
+        ".claude/skills/onboard/scripts/fix-plugins.sh"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-23",
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-25"
+    },
+    {
+      "number": 49619,
+      "repo": "anthropics/claude-code",
+      "title": "Stream idle timeout / partial response during long tool-use turns (Opus 4.7, 1M and non-1M)",
+      "url": "https://github.com/anthropics/claude-code/issues/49619",
+      "category": "degraded",
+      "status": "open",
+      "feature": "streaming watchdog",
+      "impact": "Long Opus thinking pauses (>90s) trigger 'API Error: Stream idle timeout - partial response received', killing the turn. Worse on Opus 4.7 1M context due to longer reasoning. Affects CLI, Web, Desktop, mobile. Root cause: SDK drops API ping events (anthropic-sdk-typescript#998) so watchdog cannot distinguish thinking from hang. v2.1.104 regression made fallback fail user-visible.",
+      "workaround": "CLI: set CLAUDE_STREAM_IDLE_TIMEOUT_MS=600000 (10min) in settings.json env block, OR remove CLAUDE_ENABLE_STREAM_WATCHDOG=1 entirely. Web/Desktop: split work into smaller chunks; no env var available.",
+      "affected_files": [
+        ".claude/settings.json",
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-04-26",
+      "related": [
+        46987,
+        46955,
+        47252,
+        47698,
+        47841,
+        50738,
+        53341,
+        53390
+      ]
+    },
+    {
+      "number": 48976,
+      "repo": "anthropics/claude-code",
+      "title": "Scheduled tasks ignore model setting, always run on Sonnet 4.6",
+      "url": "https://github.com/anthropics/claude-code/issues/48976",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Cloud routines / scheduled tasks model selector",
+      "impact": "Cloud routines run on Sonnet 4.6 regardless of UI selection. update_scheduled_task MCP schema lacks model field. settings.json model not consulted. Spawns CLI with literal --model default which resolves to Sonnet server-side.",
+      "workaround": "Cloud routines: NO workaround. Desktop only: edit scheduled-tasks.json on disk after full quit. Architectural: split Opus dispatcher (local) + Sonnet routines (cloud).",
+      "affected_files": [
+        "automations/shared/contract.md",
+        ".claude/rules/rate-limit-aware-workflow.md"
+      ],
+      "blocked_work": "Overnight cloud routines depending on Opus 4.7 1M reasoning quality",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-30",
+      "related": [
+        49870,
+        50363,
+        54426,
+        36754,
+        39384
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-27"
+    },
+    {
+      "number": 54426,
+      "repo": "anthropics/claude-code",
+      "title": "Opus 4.7 1M max-effort silently self-downgrades to Sonnet 4.6 mid-session AND /compact does not fire at context limit",
+      "url": "https://github.com/anthropics/claude-code/issues/54426",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Model tier persistence + /compact recovery",
+      "impact": "Opus 4.7 1M sessions silently swap to Sonnet 4.6 at context wall. /compact published recovery path does not execute. Confirmed in cron-driven cloud routine sessions. Operator only knows post-fact via /model query.",
+      "workaround": "Architectural split: Opus dispatcher (non-agent, thin) + Sonnet workers/routines (agent mode, do work). Dispatcher never accumulates context to hit wall.",
+      "affected_files": [
+        "automations/shared/contract.md",
+        ".claude/rules/rate-limit-aware-workflow.md"
+      ],
+      "blocked_work": "Long-running Opus 4.7 1M routines without operator monitoring",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-30",
+      "related": [
+        48976,
+        52149,
+        49541
+      ]
+    },
+    {
+      "number": 50312,
+      "repo": "anthropics/claude-code",
+      "title": "Scheduled Claude Routine stalls on deferred tool schema loading \u2014 requires manual input to continue",
+      "url": "https://github.com/anthropics/claude-code/issues/50312",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Cloud routines / ToolSearch deferred MCP schema loading",
+      "impact": "Scheduled routines using Gmail/GDrive/Slack connectors block on every ToolSearch call waiting for human 'continue'. Routines never finish unattended. 1.5h delays per run reported.",
+      "workaround": "Pre-declare every MCP tool name in .claude/settings.json permissions.allow. Avoid deferred-schema connectors in routine prompts. Stick to git/gh/file ops.",
+      "affected_files": [
+        ".claude/settings.json",
+        "automations/shared/contract.md"
+      ],
+      "blocked_work": "Routines using Gmail/GDrive/Slack/Atlassian connectors",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-30",
+      "related": [
+        35899,
+        54423,
+        29022
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-29"
+    },
+    {
+      "number": 53610,
+      "repo": "anthropics/claude-code",
+      "title": "Multi-agent runtime needs mechanical enforcement: 9 gaps that defeat unattended overnight operation",
+      "url": "https://github.com/anthropics/claude-code/issues/53610",
+      "category": "feature-request",
+      "status": "open",
+      "feature": "Autonomous overnight cloud routines + orchestration tool permissions",
+      "impact": "Cron-fired wakes hit permission walls on Agent/TaskCreate/Cron*/Monitor/PushNotification/RemoteTrigger/Skill(*)/ScheduleWakeup/AskUserQuestion. Bash/Write wildcards do not cover them. No permissions.includeAgentOrchestrationTools setting exists.",
+      "workaround": "Manually pre-declare all 9 orchestration tools in settings.json permissions.allow. Avoid sub-agent dispatch in cloud routines. Use linear scripts.",
+      "affected_files": [
+        ".claude/settings.json",
+        "automations/shared/contract.md"
+      ],
+      "blocked_work": "Cloud routines that dispatch sub-agents or use AskUserQuestion",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-30",
+      "related": [
+        47371,
+        38806,
+        29214
+      ]
+    },
+    {
+      "number": 54784,
+      "repo": "anthropics/claude-code",
+      "title": "Auto mode: contextual LLM permission judge denies explicitly authorized actions and read-only verification calls",
+      "url": "https://github.com/anthropics/claude-code/issues/54784",
+      "category": "degraded",
+      "status": "closed",
+      "feature": "Auto mode permission judge",
+      "impact": "Auto mode LLM judge overrides explicit permissions.allow entries. Even read-only ops get denied. Compounds with cloud routine perm walls.",
+      "workaround": "Use defaultMode: bypassPermissions when feasible. For routines, do not rely on auto mode + LLM judge.",
+      "affected_files": [
+        ".claude/settings.json"
+      ],
+      "blocked_work": "Auto-mode reliance for orchestration sessions",
+      "last_checked": "2026-06-09",
+      "added": "2026-04-30",
+      "related": [
+        53610,
+        29214,
+        38806
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-06-05"
+    },
+    {
+      "number": 55274,
+      "repo": "anthropics/claude-code",
+      "title": "Skill model: pin inherits parent 1M context flag, blocking on Sonnet without /extra-usage",
+      "url": "https://github.com/anthropics/claude-code/issues/55274",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Subagent / skill model resolution",
+      "impact": "Skills with model: sonnet frontmatter (e.g. /retro, /architect, /quality-gate) fail with 'API Error: Extra usage is required for 1M context' when invoked from Opus 4.7 1M session. Parent's [1m] context flag inherits to spawned subagent regardless of subagent's chosen model, forcing claude-sonnet-4-6[1m] which requires separate extra-usage entitlement.",
+      "workaround": "Switch session model to non-1M variant before invoking skill (/model claude-opus-4-7 without [1m]). No skill-frontmatter or settings.json fix \u2014 bug is in subagent context inheritance path.",
+      "affected_files": [
+        ".claude/rules/rate-limit-aware-workflow.md",
+        ".claude/skills/retro/SKILL.md",
+        ".claude/skills/architect/SKILL.md",
+        ".claude/skills/quality-gate/SKILL.md",
+        ".claude/agents/code-reviewer.md",
+        ".claude/agents/security-reviewer.md",
+        ".claude/agents/ecosystem-specialist.md",
+        ".claude/agents/doc-drift-detector.md"
+      ],
+      "blocked_work": "Skill-driven /retro, /architect, /quality-gate workflows on Opus 4.7 1M sessions; agent dispatch (code-reviewer, security-reviewer etc.) when session is 1M variant",
+      "last_checked": "2026-06-09",
+      "added": "2026-05-03",
+      "related": [
+        55694,
+        54947,
+        42082,
+        34296,
+        51060,
+        54426,
+        45169,
+        44117,
+        40929,
+        18346,
+        38348,
+        45847
+      ],
+      "stateReason": "DUPLICATE",
+      "closedAt": "2026-05-05"
+    },
+    {
+      "number": 54947,
+      "repo": "anthropics/claude-code",
+      "title": "Subagent inherits parent's context window size instead of model default",
+      "url": "https://github.com/anthropics/claude-code/issues/54947",
+      "category": "blocking",
+      "status": "closed",
+      "feature": "Subagent context window inheritance",
+      "impact": "Root cause for the skill-model-pin / extra-usage cluster. Subagent spawned via skill model: frontmatter, agent frontmatter, or Agent tool call inherits parent session's context window flag (e.g. [1m]) regardless of the subagent's resolved model. Forces sub-model into 1M variant; if sub-model lacks 1M entitlement => 'Extra usage required for 1M context' error.",
+      "workaround": "Same as #55274 \u2014 drop parent session [1m] suffix before invoking subagent. No per-subagent override available.",
+      "affected_files": [
+        ".claude/rules/rate-limit-aware-workflow.md"
+      ],
+      "blocked_work": "Multi-tier model strategy on 1M Opus sessions",
+      "last_checked": "2026-06-09",
+      "added": "2026-05-03",
+      "related": [
+        55274,
+        55694,
+        42082,
+        34296,
+        51060,
+        45169,
+        44117,
+        40929
+      ],
+      "stateReason": "NOT_PLANNED",
+      "closedAt": "2026-05-31"
+    },
+    {
+      "number": 1236,
+      "repo": "anthropics/claude-code-action",
+      "title": "claude-code-action fails when actions/checkout uses persist-credentials: false",
+      "url": "https://github.com/anthropics/claude-code-action/issues/1236",
+      "category": "blocking",
+      "status": "open",
+      "feature": "claude-review workflow (.github/workflows/claude-review.yml)",
+      "impact": "Action runs `git fetch origin <ref>` in setupBranch BEFORE configureGitAuth, so persist-credentials: false (zizmor `artipacked` mitigation) breaks the action with `fatal: could not read Username for 'https://github.com'`. continue-on-error: true masks the failure as green but leaves an orphan tracking comment on every PR.",
+      "workaround": "Drop `persist-credentials: false` from actions/checkout step + add trailing `git config --unset-all http.https://github.com/.extraheader || true` step with `if: always()` to scrub token after action completes. Trade-off: token in .git/config during action runtime (~5min); restored zizmor compliance post-action.",
+      "affected_files": [
+        ".github/workflows/claude-review.yml"
+      ],
+      "blocked_work": "Restoring `persist-credentials: false` for full zizmor `artipacked` compliance during action runtime",
+      "last_checked": "2026-06-09",
+      "added": "2026-05-17"
+    },
+    {
+      "number": 1266,
+      "repo": "anthropics/claude-code-action",
+      "title": "Internal error: directory mismatch for tsconfig.json fd 4 - fails on every run",
+      "url": "https://github.com/anthropics/claude-code-action/issues/1266",
+      "category": "degraded",
+      "status": "open",
+      "feature": "claude-review workflow (.github/workflows/claude-review.yml)",
+      "impact": "Action logs `Internal error: directory mismatch for directory '.../claude-code-action/<ref>/tsconfig.json', fd 4` before any tool dispatch and exits 1. Regression landed ~2026-04-26 22:50 UTC. Switching action ref/SHA does not fix it.",
+      "workaround": "None known on consumer side. Bug is internal to action's runtime initialization. Combined with #1236, continue-on-error: true masks both failures as green in gh pr checks.",
+      "affected_files": [
+        ".github/workflows/claude-review.yml"
+      ],
+      "blocked_work": "AI code review on PRs (review action fails before invoking Claude)",
+      "last_checked": "2026-06-09",
+      "added": "2026-05-17"
+    },
+    {
+      "number": 781,
+      "repo": "anthropics/claude-code-action",
+      "title": "Claude is not informed about shallow clone limitations; no user-configurable fetch depth",
+      "url": "https://github.com/anthropics/claude-code-action/issues/781",
+      "category": "degraded",
+      "status": "open",
+      "feature": "claude-review workflow (.github/workflows/claude-review.yml)",
+      "impact": "Action uses hardcoded fetch-depth=20 (or commits+1) without telling Claude. On older history queries Claude may hit `bad object` errors without realizing the clone is shallow.",
+      "workaround": "Aware of the limitation; review prompt scopes to PR diff only via `gh pr diff` which doesn't need history beyond PR base.",
+      "affected_files": [
+        ".github/workflows/claude-review.yml"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-05-17"
+    },
+    {
+      "number": 61681,
+      "repo": "anthropics/claude-code",
+      "title": "Sonnet dispatched via Agent tool fails with \"1M context required\" error",
+      "url": "https://github.com/anthropics/claude-code/issues/61681",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Agent tool subagent dispatch from 1M-context parent",
+      "impact": "From an Opus 4.7 parent session, Agent tool dispatch with model:sonnet OR model:opus fails immediately at 0 tokens with 'Usage credits required for 1M context'. Haiku dispatch still works. Breaks the documented 'Opus orchestrates, Sonnet codes' pattern AND any multi-skill EPIC that fans out subagent work (e.g. /compress wave dispatch).",
+      "workaround": "Three options: (a) /model switch to non-1M variant then /clear and resume; (b) /usage-credits enable (paid extra-usage); (c) model:haiku dispatch only \u2014 limited but functional for mechanical tasks; (d) wait for upstream fix.",
+      "affected_files": [
+        ".claude/rules/rate-limit-aware-workflow.md",
+        ".claude/rules/claude-code-quirks.md"
+      ],
+      "blocked_work": "Multi-skill EPIC fan-out (e.g. a multi-skill EPIC PLAN.md Wave 1+ dispatch); any /architect parallelism analysis recommending subagent fan-out from a 1M-context parent.",
+      "last_checked": "2026-06-09",
+      "added": "2026-05-23"
+    },
+    {
+      "number": 61808,
+      "repo": "anthropics/claude-code",
+      "title": "Max plan: 'Usage credits required for long context requests' on standard 400k context",
+      "url": "https://github.com/anthropics/claude-code/issues/61808",
+      "category": "blocking",
+      "status": "open",
+      "feature": "Max plan context-window gating",
+      "impact": "Related regression \u2014 Max plan users hit credit-gate errors on standard context. Companion to #61681. Both landed 2026-05-23.",
+      "workaround": "Same as #61681.",
+      "affected_files": [
+        ".claude/rules/rate-limit-aware-workflow.md"
+      ],
+      "blocked_work": null,
+      "last_checked": "2026-06-09",
+      "added": "2026-05-23"
+    }
+  ]
+}

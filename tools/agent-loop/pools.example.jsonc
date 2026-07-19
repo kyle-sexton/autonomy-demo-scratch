@@ -1,0 +1,36 @@
+{
+  // Default pool when AGENT_LOOP_POOL / run.local.json poolId are unset.
+  "defaultPoolId": "cursor-default",
+  "pools": {
+    "cursor-default": {},
+    // Ubuntu + tools/cloud-setup/setup.sh — local cloud-parity sessions (build cloud-parity image first)
+    "cursor-cloud-parity": {},
+    "claude-default": {
+      // Enable after tier-0 write gate + operator/spend-safety-attestation-claude.json + compliance sign-off
+      "enabled": false,
+      "gateMarkerFile": "operator/spend-safety-attestation-claude.json"
+    },
+    "codex-default": {
+      "enabled": false,
+      "gateMarkerFile": "operator/spend-safety-attestation-codex.json",
+      "credentialBindMounts": [
+        {
+          "hostPath": "~/.codex/auth.json",
+          "containerPath": "/var/codex-home/auth.json",
+          "readOnly": true
+        }
+      ]
+    },
+    "grok-default": {
+      "enabled": false,
+      "gateMarkerFile": "operator/spend-safety-attestation-grok.json",
+      "credentialBindMounts": [
+        {
+          "hostPath": "~/.grok/auth.json",
+          "containerPath": "/var/grok-home/auth.json",
+          "readOnly": true
+        }
+      ]
+    }
+  }
+}

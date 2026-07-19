@@ -1,0 +1,15 @@
+[project]
+name = "corpus-extract"
+version = "0.1.0"
+description = "Extract Pat Pattison craft EPUBs to verbatim normalized markdown with stable locators."
+requires-python = ">=3.14"
+dependencies = ["defusedxml>=0.7.1"]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1"]
+
+[tool.ruff]
+extend = "../../ruff.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

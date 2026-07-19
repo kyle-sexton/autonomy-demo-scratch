@@ -1,0 +1,26 @@
+{
+  "_doc": "Claude Code model tokens for routing.json audit rows — runtime pins: ADR 0011 + rate-limit-aware-workflow.md",
+  "models": [
+    {
+      "modelId": "opus",
+      "docUrl": "https://code.claude.com/docs/en/about-claude/models",
+      "pool": "api",
+      "defaultSlug": "opus",
+      "cliSlugMatch": "opus"
+    },
+    {
+      "modelId": "sonnet",
+      "docUrl": "https://code.claude.com/docs/en/about-claude/models",
+      "pool": "api",
+      "defaultSlug": "sonnet",
+      "cliSlugMatch": "sonnet"
+    },
+    {
+      "modelId": "haiku",
+      "docUrl": "https://code.claude.com/docs/en/about-claude/models",
+      "pool": "api",
+      "defaultSlug": "haiku",
+      "cliSlugMatch": "haiku"
+    }
+  ]
+}

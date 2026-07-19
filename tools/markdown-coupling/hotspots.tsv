@@ -1,0 +1,10 @@
+# Semantic-duplication hotspots — context/problem-and-evidence.md "Five semantic-duplication hotspots".
+# Axis-3 blast-radius comparison key: Phase 6 re-measures these EXACT patterns to show reduced spread.
+# Tab-separated columns: name <TAB> ssot_file <TAB> heading <TAB> grep_pattern
+# grep_pattern is a Python-re proxy for "primary files touching this concept" (the volatile token whose
+# spread IS the blast radius), NOT a full semantic matcher — direct semantic detection is Phase 4 (M4).
+resume-protocol	.claude/rules/work-artifacts.md	Resume protocol	[Rr]esume protocol
+phase-boundary-ritual	.claude/rules/work-artifacts.md	Phase boundary ritual	[Pp]hase boundary
+slug-derivation	tools/work-artifacts/derive-slug.sh	Slug derivation	derive-slug
+verify-evidence-contract	.claude/rules/work-artifacts/verify-evidence-contract.md	(whole file)	verify-evidence
+workflow-8-step	.claude/skills/workflow/SKILL.md	8-step workflow	8-step workflow

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medley.local/schemas/watch-quality-audit.json",
+  "title": "YouTube watch key-frame quality audit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reviewedAt", "files"],
+  "properties": {
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 10
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "pass"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "\\.png$"
+          },
+          "pass": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

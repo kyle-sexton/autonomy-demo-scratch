@@ -1,0 +1,17 @@
+# Undeclared labels tracked pending a github-iac PR that registers them in
+# GovernedRepositories.cs's medley ExtraLabels. Reported like any other drift
+# (still visible in the rolling tracking issue), but do not fail
+# label-drift-check.yml on their own -- see decision #33 in the org-wide
+# issue/PR consistency initiative's Decisions Log.
+#
+# issue-labeling.yml already applies these on issue creation (bug-report.yml's
+# required Ecosystem dropdown, maintenance-task.yml's Category/Cadence
+# dropdowns); they are not yet declared upstream. Remove each line once its
+# github-iac registration PR is merged AND applied -- an allowlist entry with
+# nothing live to match is inert, not an error, so this file does not need to
+# shrink in lockstep with registration landing, but it should not grow stale
+# indefinitely either.
+ecosystem: *
+category: *
+cadence: *
+recurring

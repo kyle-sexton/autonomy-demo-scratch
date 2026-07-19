@@ -1,0 +1,38 @@
+# Cloud-parity Cursor pool image — local agent-loop sessions that mirror Cursor Cloud /
+# `.cursor/environment.json` install (`tools/cloud-setup/setup.sh`) plus cursor-agent.
+#
+# Build from repository root (not tools/agent-loop):
+#   docker build -f tools/agent-loop/docker/cursor/Dockerfile.cloud-parity -t agent-loop-cursor:cloud-parity .
+#
+# Heavier than the thin default image; use when you need lefthook/hook/dotnet/node tooling
+# inside the container (medley verify, formatter guards, etc.).
+FROM ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+
+ENV DEBIAN_FRONTEND=noninteractive
+COPY tools/cloud-setup/setup.sh /tmp/medley-cloud-setup.sh
+RUN chmod +x /tmp/medley-cloud-setup.sh \
+  && bash /tmp/medley-cloud-setup.sh \
+  && rm -f /tmp/medley-cloud-setup.sh
+
+# jq is required by .claude/hooks — ensure present even if cloud setup skipped it.
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends jq ca-certificates curl git ripgrep \
+  && rm -rf /var/lib/apt/lists/*
+
+ARG CURSOR_AGENT_VERSION=2026.06.04
+RUN curl -fsSL https://cursor.com/install -o /tmp/cursor-install.sh \
+  && bash /tmp/cursor-install.sh \
+  && rm -f /tmp/cursor-install.sh \
+  && ln -sf /root/.local/bin/cursor-agent /usr/local/bin/cursor-agent \
+  && cursor-agent --version | grep -Fq "${CURSOR_AGENT_VERSION}"
+ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
+
+ARG AGENT_LOOP_UID=0
+ARG AGENT_LOOP_GID=0
+RUN if [ "${AGENT_LOOP_UID}" != "0" ] && [ "${AGENT_LOOP_GID}" != "0" ]; then \
+      groupadd -g "${AGENT_LOOP_GID}" agentloop 2>/dev/null || true; \
+      useradd -u "${AGENT_LOOP_UID}" -g "${AGENT_LOOP_GID}" -d /workspace agentloop 2>/dev/null || true; \
+    fi
+
+WORKDIR /workspace
+RUN cursor-agent --version

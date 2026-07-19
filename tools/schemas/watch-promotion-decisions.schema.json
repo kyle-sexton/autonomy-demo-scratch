@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medley.local/schemas/watch-promotion-decisions.json",
+  "title": "YouTube watch promotion decisions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decisions"],
+  "properties": {
+    "reviewedAt": {
+      "type": "string"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceFile", "verdict"],
+        "properties": {
+          "sourceFile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["promote", "reject"]
+          },
+          "destName": {
+            "type": "string"
+          },
+          "gapNote": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "rejectReason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

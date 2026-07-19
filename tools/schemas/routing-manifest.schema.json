@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medley.local/schemas/routing-manifest.json",
+  "title": "Work slice routing manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_schema_version", "complexityTier", "phases"],
+  "properties": {
+    "_schema_version": { "type": "string", "const": "1" },
+    "_doc": { "type": "string" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "complexityTier": {
+      "type": "string",
+      "enum": ["trivial", "standard", "elevated", "frontier"]
+    },
+    "blastRadius": { "type": "string", "enum": ["low", "medium", "high"] },
+    "orchestrationMode": {
+      "type": "string",
+      "enum": ["interactive", "autonomous-ready"]
+    },
+    "apiPoolBudget": { "type": "string", "enum": ["normal", "conserve"] },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/phase" }
+    },
+    "stages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stage" }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "stage",
+        "surfaceClass",
+        "tool",
+        "catalogNamespace",
+        "catalogModelId",
+        "roleHint",
+        "pool"
+      ],
+      "properties": {
+        "phase": { "type": "integer", "minimum": 1 },
+        "stage": { "type": "string" },
+        "surfaceClass": { "type": "string" },
+        "surface": { "type": "string" },
+        "tool": { "type": "string", "enum": ["cursor", "codex", "claude-code", "grok"] },
+        "catalogNamespace": { "type": "string" },
+        "catalogModelId": { "type": "string", "minLength": 1 },
+        "roleHint": { "type": "string" },
+        "pool": { "type": "string", "enum": ["composer", "api"] },
+        "variant": { "type": "string" },
+        "catalogFetchedAt": { "type": "string" },
+        "goalCondition": { "type": "string" },
+        "basis": { "type": "string" },
+        "verify": { "$ref": "#/$defs/verify" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "surfaceClass", "tool", "catalogModelId", "pool"],
+      "properties": {
+        "stage": { "type": "string" },
+        "surfaceClass": { "type": "string" },
+        "tool": { "type": "string" },
+        "catalogModelId": { "type": "string" },
+        "pool": { "type": "string" }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalogModelId", "roleHint", "pool"],
+      "properties": {
+        "stage": { "type": "string" },
+        "surfaceClass": { "type": "string" },
+        "tool": { "type": "string" },
+        "catalogNamespace": { "type": "string" },
+        "catalogModelId": { "type": "string" },
+        "roleHint": { "type": "string" },
+        "pool": { "type": "string" },
+        "variant": { "type": "string" }
+      }
+    }
+  }
+}

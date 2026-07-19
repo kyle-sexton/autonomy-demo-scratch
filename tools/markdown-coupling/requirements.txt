@@ -1,0 +1,16 @@
+# Dependencies for the markdown-coupling baseline detector (tools/markdown-coupling/).
+#
+# datasketch — MinHash + MinHashLSH for sub-document near-duplicate detection (axis 1).
+#   Earned at chunk scale: the corpus is ~10k heading-section chunks (Tier-0 measured),
+#   where exact O(m^2) Jaccard is minutes-to-hours and shingle-set memory is hundreds of MB.
+#   MinHashLSH gives sub-quadratic candidate generation; exact Jaccard verifies candidates.
+#   High-reputation (ekzhu, MIT, maintained), deterministic with seed=1. Per AGENTS.md
+#   dependency framework "third-party with due diligence". Tier-0 verified installing +
+#   importing + running on Python 3.14.3 / numpy 2.4.6 (Windows), 2026-06-04.
+# numpy + scipy — datasketch's two unconditional install_requires (PyPI requires_dist). numpy is
+#   the determinism-bearing one (MinHash permutation seeding); both pinned for reproducible builds
+#   so the determinism guarantee (identical baseline body across runs) cannot drift on a transitive
+#   bump. scipy==1.17.1 is the version uv resolves for datasketch==1.10.0 on Python 3.14.
+datasketch==1.10.0
+numpy==2.4.6
+scipy==1.17.1

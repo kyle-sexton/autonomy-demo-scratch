@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "roles": {
+    "capability-distribution-home": null,
+    "ci-orchestration-home": null,
+    "settings-as-code-home": null,
+    "org-policy-home": null,
+    "runner-execution-home": null
+  },
+  "org_policy_home": null,
+  "budget_posture": "free",
+  "substrate": {
+    "local-machine": true,
+    "ci-runners": false,
+    "self-run-infrastructure": false
+  },
+  "triggers": {
+    "surfaces": {
+      "label-kick": {
+        "class": "tracker-vcs-event",
+        "transport": "push",
+        "execution_surface": "demo-local-session"
+      },
+      "hourly-drain": {
+        "class": "temporal",
+        "transport": "poll",
+        "scheduler_class": "ci-cron",
+        "execution_surface": "demo-local-session"
+      }
+    },
+    "drain": { "cadence": "hourly", "execution_surface": "demo-local-session" }
+  }
+}

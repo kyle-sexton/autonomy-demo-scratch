@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Operator entry: run one {{SLUG}} PLAN phase via agent-loop.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: run-phase.sh <phase-number> [max-iterations]
+
+Runs tools/agent-loop orchestrator for .work/{{SLUG}} phase N.
+Requires: Docker, agent-loop built, spend-safety attestation, CURSOR_API_KEY.
+
+Environment (set by this script):
+  RALPH_OUT_SUBDIR={{OUT_SUBDIR}}
+  AGENT_LOOP_RUN_ID={{SLUG}}-p<N>
+  AGENT_LOOP_COMPLETION_FILE={{OUT_SUBDIR}}/phase-N.done
+  AGENT_LOOP_SELF_CHECK_FILE={{OUT_SUBDIR}}/phase-N.self-check.md
+  AGENT_LOOP_BLOCKED_FILE={{OUT_SUBDIR}}/phase-N.blocked
+  AGENT_LOOP_HOST_VERIFY_SCRIPT=.work/{{SLUG}}/scripts/verify-phase-N.sh
+
+Examples:
+  bash .work/{{SLUG}}/scripts/run-phase.sh 1
+EOF
+}
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  usage >&2
+  exit 2
+fi
+
+PHASE="$1"
+MAX_ITER="${2:-{{DEFAULT_MAX_ITER}}}"
+
+case "$PHASE" in
+  '' | *[!0-9]*)
+    echo "error: phase must be a number 1-{{PHASE_MAX}}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$PHASE" -lt 1 || "$PHASE" -gt {{PHASE_MAX}} ]]; then
+  echo "error: phase must be 1-{{PHASE_MAX}}" >&2
+  exit 2
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
+SLICE_ROOT="$REPO_ROOT/.work/{{SLUG}}"
+PROMPT="$SLICE_ROOT/research/implement-phase-${PHASE}.prompt.md"
+ORCHESTRATOR="$REPO_ROOT/tools/agent-loop/build/orchestrator.js"
+
+if [[ ! -f "$PROMPT" ]]; then
+  echo "error: missing prompt $PROMPT" >&2
+  exit 2
+fi
+
+if [[ ! -f "$ORCHESTRATOR" ]]; then
+  echo "error: build agent-loop first: cd tools/agent-loop && npm run build" >&2
+  exit 2
+fi
+
+mkdir -p "$SLICE_ROOT/out"
+
+export RALPH_OUT_SUBDIR="{{OUT_SUBDIR}}"
+export AGENT_LOOP_RUN_ID="{{SLUG}}-p${PHASE}"
+export AGENT_LOOP_COMPLETION_FILE="{{OUT_SUBDIR}}/phase-${PHASE}.done"
+export AGENT_LOOP_SELF_CHECK_FILE="{{OUT_SUBDIR}}/phase-${PHASE}.self-check.md"
+export AGENT_LOOP_BLOCKED_FILE="{{OUT_SUBDIR}}/phase-${PHASE}.blocked"
+export AGENT_LOOP_HOST_VERIFY_SCRIPT=".work/{{SLUG}}/scripts/verify-phase-${PHASE}.sh"
+
+echo "== agent-loop phase $PHASE =="
+echo "   workspace:  $REPO_ROOT"
+echo "   prompt:     $PROMPT"
+echo "   out subdir: $RALPH_OUT_SUBDIR"
+echo "   max iter:   $MAX_ITER"
+echo "   run id:     $AGENT_LOOP_RUN_ID"
+echo ""
+
+cd "$REPO_ROOT/tools/agent-loop"
+node build/orchestrator.js \
+  "$MAX_ITER" \
+  "$PROMPT" \
+  1 \
+  "$REPO_ROOT"
+

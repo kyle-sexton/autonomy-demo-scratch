@@ -1,0 +1,14 @@
+# Pattern registry for detect-sweep.sh (machine SSOT).
+# Human prose + examples: the docs-hygiene plugin's rename-references patterns reference (/docs-hygiene:rename-references)
+# Columns: id<TAB>triage<TAB>template (placeholders {old} {new})
+slash-token	certain	{old}
+bare-token	ambiguous	(^|[^[:alnum:]_-]){old}([^[:alnum:]_-]|$)
+path-context-md	certain	context/{old}\.md
+path-skills-dir	certain	skills/{old}/
+path-skill-md	certain	{old}/SKILL\.md
+path-skill-subdir	certain	{old}/(context|reference|references|scripts|evals)/
+chain-forward	chain	(→|->|,| and | then )[[:space:]]*{old}([^[:alnum:]_-]|$)
+chain-backward	chain	(^|[^[:alnum:]_-]){old}[[:space:]]*(→|->|,| and | then )
+numbered-table-row	chain	\|[[:space:]]*[0-9]+\.[[:space:]]*{old}[[:space:]]*\|
+numbered-table-row-open	chain	\|[[:space:]]*[0-9]+\.[[:space:]]*{old}([^[:alnum:]_-]|$)
+dot-sub-identifier	certain	(^|[^[:alnum:]_-]){old}\.[[:alnum:]_-]+
