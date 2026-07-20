@@ -2,6 +2,8 @@
 # Acceptance proof for the fleet dogfood wiring: one work item joins the wrapper
 # span, the session's native telemetry, and the return-accounting record on the
 # telemetry contract's Pillar-2 attribute (string-equal canonical item URL).
+# jq projects each source to a flat table; DuckDB performs the join (the same
+# query-side join shape the WP3 demo established).
 #
 # Usage: verify-join.sh <issue-number> [<session-store-dir>]
 set -euo pipefail
@@ -14,35 +16,40 @@ owner_repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 item_url="https://github.com/${owner_repo}/issues/${issue}"
 artifact_dir="${repo_root}/.artifacts"
 
-# return-accounting record, pulled from the item's marker comment
+# wrapper spans -> flat (item_url, trace_id, schema_url)
+jq -c '.resourceSpans[] as $rs | $rs.scopeSpans[].spans[] as $s |
+  ($s.attributes[] | select(.key == "autonomy.work_item.url").value.stringValue) as $u |
+  {item_url: $u, trace_id: $s.traceId, schema_url: $rs.schemaUrl}' \
+  "${artifact_dir}/pipeline.jsonl" > "${artifact_dir}/flat-wrapper.jsonl"
+
+# native session metrics -> flat (item_url) one row per resource emission
+jq -c '.resourceMetrics[]? |
+  (.resource.attributes[]? | select(.key == "autonomy.work_item.url").value.stringValue) as $u |
+  select($u != null) | {item_url: $u}' \
+  "${store}/cc-metrics.json" > "${artifact_dir}/flat-session.jsonl"
+
+# return-accounting record from the item's marker comment
 # shellcheck disable=SC2016  # the backtick fence delimiters are literal, not expansions
 gh issue view "$issue" --json comments \
   --jq '[.comments[].body | select(contains("autonomy:return-accounting:v1"))][0]' \
   | sed -n '/^```json$/,/^```$/p' | sed '1d;$d' > "${artifact_dir}/return-record.json"
 
+flat_dir="$artifact_dir"
+if command -v cygpath >/dev/null 2>&1; then flat_dir="$(cygpath -m "$artifact_dir")"; fi
+
 duckdb -json <<SQL
 WITH wrapper AS (
-  SELECT rs.unnest->>'schemaUrl'                                   AS schema_url,
-         span.unnest->>'traceId'                                   AS trace_id,
-         attr.unnest->'value'->>'stringValue'                      AS item_url
-  FROM read_json_auto('${artifact_dir}/pipeline.jsonl', format='newline_delimited') j,
-       UNNEST(j.resourceSpans) rs,
-       UNNEST((rs.unnest->'scopeSpans')[1]->'spans') span,
-       UNNEST(span.unnest->'attributes') attr
-  WHERE attr.unnest->>'key' = 'autonomy.work_item.url'
+  SELECT item_url, trace_id, schema_url
+  FROM read_json_auto('${flat_dir}/flat-wrapper.jsonl', format='newline_delimited')
 ),
 session AS (
-  SELECT attr.unnest->'value'->>'stringValue'                      AS item_url,
-         COUNT(*)                                                  AS session_emissions
-  FROM read_json_auto('${store}/cc-metrics.json', format='newline_delimited') j,
-       UNNEST(j.resourceMetrics) rm,
-       UNNEST(rm.unnest->'resource'->'attributes') attr
-  WHERE attr.unnest->>'key' = 'autonomy.work_item.url'
+  SELECT item_url, COUNT(*) AS session_emissions
+  FROM read_json_auto('${flat_dir}/flat-session.jsonl', format='newline_delimited')
   GROUP BY 1
 ),
 record AS (
   SELECT work_item_url AS item_url, attested
-  FROM read_json_auto('${artifact_dir}/return-record.json')
+  FROM read_json_auto('${flat_dir}/return-record.json')
 )
 SELECT w.item_url, w.trace_id, w.schema_url, s.session_emissions, r.attested
 FROM wrapper w

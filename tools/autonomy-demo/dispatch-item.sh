@@ -20,8 +20,10 @@ item_url="https://github.com/${owner_repo}/issues/${issue}"
 artifact_dir="${repo_root}/.artifacts"
 mkdir -p "$artifact_dir"
 
-# --- lease via the tracker seam (race-safe claim) ---------------------------
-"${repo_root}/tools/work-item-tracker/adapters/github/claim.sh" "$issue"
+# --- lease via the tracker seam (race-safe claim; TTL from the binding) -----
+ttl_hours="$(jq -r '.config.lease_ttl_hours' "${repo_root}/.work-item-tracker.json")"
+"${repo_root}/tools/work-item-tracker/adapters/github/claim.sh" \
+  "github:${owner_repo}#${issue}" --ttl-hours "$ttl_hours"
 
 # --- contract-authored wrapper span + trace context -------------------------
 trace_id="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
