@@ -23,11 +23,22 @@
       },
       "hourly-drain": {
         "class": "temporal",
-        "transport": "poll",
-        "scheduler_class": "ci-cron",
+        "transport": "push",
+        "scheduler_class": "local-desktop-scheduler",
         "execution_surface": "demo-local-session"
       }
     },
     "drain": { "cadence": "hourly", "execution_surface": "demo-local-session" }
+  },
+  "routines": {
+    "enabled": {
+      "autonomy-demo-hourly-drain": {
+        "surface": "hourly-drain",
+        "run_link_prefix": "file:///C:/ProgramData/local-otel/cc-store/",
+        "producer_identity": null,
+        "producer_identity_status": "pending-phase2-task-creation",
+        "attestation": "Desktop app native task run history (per-run session records visible in the app); app-session attestation only, no cryptographic run attestation. Scheduled-fire identity is app-session-attested until the Phase 2 Desktop scheduled task is created, at which point its platform-attested scheduler-unit reference pins producer_identity. Until then a genuinely routine-fired signal stays unclassified and fail-closes human-gated, per trigger-dispatch.md."
+      }
+    }
   }
 }
