@@ -36,10 +36,62 @@ readonly DRAIN_BRANCH_PREFIX="autonomy/drain"
 # Overridable for the Phase 2 Desktop scheduler surface.
 DRAIN_WORKTREE_ROOT="${DRAIN_WORKTREE_ROOT:-${DRAIN_REPO_ROOT%/*}/.autonomy-drain-worktrees}"
 
-# Default OTel session store (matches verify-join and backup-evidence defaults).
-DRAIN_OTEL_STORE="${DRAIN_OTEL_STORE:-${CC_OTEL_STORE:-C:/ProgramData/local-otel/cc-store}}"
-
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# drain_binding_store_path — the OTel session store filesystem path derived from
+# the binding's routines.enabled.*.run_link_prefix (the one place the machine
+# store location is declared). Empty when no binding / no prefix is present.
+# Converts the file:// URL form to a filesystem path, stripping the leading slash
+# only ahead of a Windows drive (file:///C:/x -> C:/x; file:///var/x -> /var/x).
+drain_binding_store_path() {
+  local binding="${DRAIN_REPO_ROOT}/.claude/autonomy/binding.json" prefix=""
+  [[ -f "$binding" ]] || { printf ''; return 0; }
+  prefix="$(jq -r 'first(.routines.enabled[]?.run_link_prefix // empty) // empty' \
+    "$binding" 2>/dev/null || true)"
+  [[ -n "$prefix" ]] || { printf ''; return 0; }
+  prefix="${prefix#file://}"
+  [[ "$prefix" =~ ^/[A-Za-z]:/ ]] && prefix="${prefix#/}"
+  printf '%s\n' "${prefix%/}"
+}
+
+# drain_otel_store — resolved OTel session store path. Resolution order:
+# DRAIN_OTEL_STORE env -> CC_OTEL_STORE env -> binding run_link_prefix. FAILS
+# CLOSED (return 1, no machine-literal fallback) when none resolves; a direct
+# `store="$(drain_otel_store)"` assignment then aborts the caller under set -e.
+drain_otel_store() {
+  if [[ -n "${_DRAIN_OTEL_STORE_CACHE:-}" ]]; then
+    printf '%s\n' "$_DRAIN_OTEL_STORE_CACHE"
+    return 0
+  fi
+  local v="${DRAIN_OTEL_STORE:-${CC_OTEL_STORE:-}}"
+  [[ -n "$v" ]] || v="$(drain_binding_store_path)"
+  [[ -n "$v" ]] || {
+    echo "drain: OTel session store unresolved; set DRAIN_OTEL_STORE (or CC_OTEL_STORE), or populate routines.enabled.*.run_link_prefix in .claude/autonomy/binding.json" >&2
+    return 1
+  }
+  _DRAIN_OTEL_STORE_CACHE="$v"
+  printf '%s\n' "$v"
+}
+
+# drain_operator_login — the account identity the return-accounting record
+# attributes to and @-mentions. Resolution order: binding
+# routines.enabled.*.producer_identity (when non-null) -> `gh api user`. No
+# literal fallback: an unresolvable identity fails closed under set -e rather
+# than writing a wrong/empty owner into the attestation record.
+drain_operator_login() {
+  if [[ -n "${_DRAIN_OPERATOR_LOGIN_CACHE:-}" ]]; then
+    printf '%s\n' "$_DRAIN_OPERATOR_LOGIN_CACHE"
+    return 0
+  fi
+  local id="" binding="${DRAIN_REPO_ROOT}/.claude/autonomy/binding.json"
+  if [[ -f "$binding" ]]; then
+    id="$(jq -r 'first(.routines.enabled[]?.producer_identity // empty) // empty' \
+      "$binding" 2>/dev/null || true)"
+  fi
+  [[ -n "$id" ]] || id="$(gh api user --jq .login)"
+  _DRAIN_OPERATOR_LOGIN_CACHE="$id"
+  printf '%s\n' "$id"
+}
 
 # drain_c2_label — the label the drain claims on. Resolution order: env override,
 # then the binding's optional triggers.drain.work_class_label, then the
