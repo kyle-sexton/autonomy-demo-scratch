@@ -57,17 +57,21 @@ work_class="$(drain_class_from_label "$label")"
 # --- reconcile helpers ------------------------------------------------------
 
 # drain_open_reconcile_titles — titles of currently-open tracker items, used to
-# dedup reconcile filings (adapter obligation 2: idempotent, identity-keyed).
+# dedup reconcile filings (adapter obligation 2: idempotent, identity-keyed). The
+# `tr -d '\r'` strips the carriage return jq.exe appends per line on Windows;
+# without it every title ends in CR and the `grep -qxF` dedup below never matches,
+# re-filing the same reconcile item on every hourly fire.
 drain_open_reconcile_titles() {
   "$ADAPTER_DIR/list-items.sh" --state open 2>/dev/null \
-    | jq -r '.items[]?.title' 2>/dev/null || true
+    | jq -r '.items[]?.title' 2>/dev/null | tr -d '\r' || true
 }
 
 # drain_file_reconcile_item <kind> <run_id> <issue-or-dash> <detail> — file one
 # deduped, human-gated tracker item. Title carries the (kind,run,issue) identity.
 drain_file_reconcile_item() {
   local kind="$1" rid="$2" ref="$3" detail="$4"
-  local title="[drain-reconcile] ${kind}: run ${rid} item #${ref}"
+  local title
+  title="$(drain_reconcile_title "$kind" "$rid" "$ref")"
   if drain_open_reconcile_titles | grep -qxF "$title"; then
     return 0
   fi
@@ -104,7 +108,57 @@ drain_reconcile() {
     done
   fi
 
-  # 2. Detections over this pipeline's own prior runs (run-state, last status
+  # 2. Merged-but-open C2 items (double-drain hazard). Once a human merges a drain
+  # PR, the issue should be closed; while it stays OPEN and C2-labelled, clearing
+  # its assignee would make it claimable again (a re-drain of already-shipped work).
+  # The drain NEVER closes issues/PRs — it files a human-gated reconcile item. Keyed
+  # on the merged PR's run_id (embedded in the head branch), so the title is stable
+  # and drain_file_reconcile_item dedups it idempotently across hourly fires.
+  # gh reads here are load-bearing for the guard; a read failure WARNs loudly and
+  # skips the block (never a silent no-op that would hide the double-drain hazard).
+  local owner_repo merged_raw open_raw
+  owner_repo="$(drain_owner_repo 2>/dev/null || true)"
+  if [[ -z "$owner_repo" ]]; then
+    echo "drain-next: WARN reconcile could not resolve owner/repo; skipping merged-but-open check" >&2
+  elif ! merged_raw="$(gh pr list --repo "$owner_repo" \
+    --search "head:${DRAIN_BRANCH_PREFIX}/ is:merged" \
+    --json number,headRefName --limit 200 2>/dev/null)"; then
+    echo "drain-next: WARN reconcile could not list merged drain PRs; skipping merged-but-open check" >&2
+  elif ! open_raw="$("$ADAPTER_DIR/list-items.sh" --state open 2>/dev/null)"; then
+    echo "drain-next: WARN reconcile could not list open items; skipping merged-but-open check" >&2
+  else
+    local merged_count merged_map open_c2 existing_titles flags
+    # Truncation tell: server-side search narrows to drain PRs, so hitting the cap
+    # is unlikely, but a full page means the view may be incomplete.
+    merged_count="$(printf '%s' "$merged_raw" | jq 'length' 2>/dev/null || echo 0)"
+    [[ "$merged_count" -ge 200 ]] \
+      && echo "drain-next: WARN merged drain-PR list hit the 200 cap; merged-but-open check may be incomplete" >&2
+    # Merged drain PRs -> "<issue>\t<pr_number>\t<run_id>" (run_id = branch segment).
+    # The startswith filter re-verifies the server-side head: match client-side.
+    merged_map="$(printf '%s' "$merged_raw" | jq -r --arg pfx "${DRAIN_BRANCH_PREFIX}/" '
+        .[] | select(.headRefName | startswith($pfx))
+        | (.headRefName | ltrimstr($pfx) | split("/")) as $seg
+        | [$seg[0], (.number | tostring), $seg[1]] | @tsv' | tr -d '\r')"
+    # Open items still carrying the C2 label (issue numbers, one per line).
+    open_c2="$(printf '%s' "$open_raw" | jq -r --arg lbl "$label" \
+      '.items[]? | select(.labels | index($lbl)) | (.url | split("/") | last)' | tr -d '\r')"
+    existing_titles="$(drain_open_reconcile_titles)"
+    # Pure decision (testable off fixtures): which OPEN+C2 issues have a merged
+    # drain PR and no reconcile item already filed.
+    flags="$(printf '%s\n' "$merged_map" | drain_merged_but_open_flags "$open_c2" "$existing_titles")"
+    local m_issue pr_num run_from_branch detail
+    while IFS=$'\t' read -r m_issue pr_num run_from_branch; do
+      [[ -n "$m_issue" ]] || continue
+      detail="issue #${m_issue} is OPEN and ${label}-labelled but its drain PR #${pr_num} is already MERGED; close the issue by hand (an open merged item can be re-claimed if its assignee is cleared)"
+      if [[ "$dry" == "true" ]]; then
+        echo "reconcile(dry): item #${m_issue} merged-but-open (PR #${pr_num}, run ${run_from_branch:-?}) — would file reconcile item"
+      else
+        drain_file_reconcile_item "merged-but-open" "${run_from_branch:-unknown}" "$m_issue" "$detail"
+      fi
+    done <<<"$flags"
+  fi
+
+  # 3. Detections over this pipeline's own prior runs (run-state, last status
   # per run_id). Dry-run reports; a live run files deduped human-gated items.
   [[ -f "$DRAIN_RUN_STATE" ]] || return 0
   local latest
@@ -132,7 +186,7 @@ drain_reconcile() {
       continue
     fi
 
-    # 2a. Stranded lease: item still open under a dead run of ours.
+    # 3a. Stranded lease: item still open under a dead run of ours.
     local istate
     istate="$(gh issue view "$pissue" --repo "$(drain_owner_repo)" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
     if [[ "$istate" == "OPEN" ]]; then
@@ -140,7 +194,7 @@ drain_reconcile() {
         "item still OPEN after a dead drain run held its lease (session_id=$prid); verify the lease and reclaim or reassign by hand"
     fi
 
-    # 2b. Branch without PR, and 2c. PR without an evidence row.
+    # 3b. Branch without PR, and 3c. PR without an evidence row.
     if [[ -n "$pbranch" ]]; then
       local pr_url
       pr_url="$(gh pr list --repo "$(drain_owner_repo)" --head "$pbranch" --state all \
@@ -163,11 +217,7 @@ drain_reconcile "$run_id" "$dry_run" || echo "drain-next: WARN reconcile hit an 
 
 # --- (b) candidate selection via the tracker seam ---------------------------
 items_json="$("$ADAPTER_DIR/list-items.sh" --state open)"
-mapfile -t candidates < <(printf '%s\n' "$items_json" | jq -r --arg lbl "$label" '
-  .items
-  | map(select((.labels | index($lbl)) and .blocked_by_count == 0 and (.assignees | length == 0)))
-  | sort_by(.url | split("/") | last | tonumber)
-  | .[] | [.id, .url] | @tsv')
+mapfile -t candidates < <(printf '%s\n' "$items_json" | drain_select_candidates "$label")
 
 if [[ "${#candidates[@]}" -eq 0 ]]; then
   echo "no-work"

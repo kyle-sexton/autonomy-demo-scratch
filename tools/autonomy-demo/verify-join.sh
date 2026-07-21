@@ -6,7 +6,10 @@
 #
 # Join key is the distinct pair (item_url, run_id): completeness is per fired
 # run, not raw row count. jq projects each source to a flat table; DuckDB joins.
-# Revert detection is left as TODO(#778) (see the `reverted` column).
+#
+# Revert detection: a merged row is `reverted` when origin/main history AFTER the
+# merge carries a commit reverting merge_sha ("This reverts commit <sha>"). The
+# read is against origin/main; a `git fetch` below refreshes it before the lookup.
 #
 # Usage: verify-join.sh <issue-number> [<session-store-dir>]
 set -euo pipefail
@@ -52,7 +55,7 @@ gh issue view "$issue" --json comments \
 # (PR not yet open, gate pending, not yet merged).
 pr_url="$(jq -r '.pr_url // empty' "${artifact_dir}/return-record.json" 2>/dev/null || true)"
 run_id="$(jq -r '.run_id // empty' "${artifact_dir}/return-record.json" 2>/dev/null || true)"
-head_sha="" merged_at="" merge_sha="" gate_conclusion=""
+head_sha="" merged_at="" merge_sha="" gate_conclusion="" reverted=""
 if [[ -n "$pr_url" ]]; then
   pr_json="$(gh pr view "$pr_url" --json headRefOid,mergedAt,mergeCommit 2>/dev/null || echo '{}')"
   head_sha="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
@@ -63,15 +66,37 @@ if [[ -n "$pr_url" ]]; then
       --jq "[.check_runs[] | select(.name == \"${DRAIN_GATE_CHECK_NAME}\")][0].conclusion // empty" \
       2>/dev/null || true)"
   fi
+  # Revert detection over origin/main. reverted = the SHA of the commit reverting
+  # this merge, or null when confirmed unreverted. This FAILS CLOSED: revert status
+  # feeds the C2 eligibility gate, so "could not determine" must NOT masquerade as
+  # clean. A failed fetch or an unreadable range aborts the whole join (no row is
+  # emitted with unknown revert status) rather than defaulting to null.
+  #
+  # DRAIN_SKIP_FETCH=1 (set by predicate-c2.sh, which fetches once before its loop)
+  # skips the per-invocation fetch; the abort-on-unreadable-range check below still
+  # applies, so completeness is preserved either way.
+  if [[ -n "$merge_sha" ]]; then
+    if [[ "${DRAIN_SKIP_FETCH:-}" != "1" ]]; then
+      if ! git -C "$DRAIN_REPO_ROOT" fetch --quiet origin 2>/dev/null; then
+        echo "verify-join: FATAL could not fetch origin; revert status undeterminable for merge ${merge_sha} (evidence completeness is required) — aborting" >&2
+        exit 1
+      fi
+    fi
+    if ! reverted="$(drain_revert_sha "$DRAIN_REPO_ROOT" "$merge_sha" "origin/main")"; then
+      echo "verify-join: FATAL revert lookup failed for merge ${merge_sha} (origin/main range unreadable) — aborting rather than emitting unknown revert status" >&2
+      exit 1
+    fi
+  fi
 fi
 jq -cn --arg u "$item_url" --arg r "$run_id" --arg pr "$pr_url" --arg hs "$head_sha" \
-  --arg gc "$gate_conclusion" --arg ma "$merged_at" --arg ms "$merge_sha" \
+  --arg gc "$gate_conclusion" --arg ma "$merged_at" --arg ms "$merge_sha" --arg rv "$reverted" \
   '{item_url: $u, run_id: $r,
     pr_url: (if $pr == "" then null else $pr end),
     head_sha: (if $hs == "" then null else $hs end),
     gate_conclusion: (if $gc == "" then null else $gc end),
     merged_at: (if $ma == "" then null else $ma end),
-    merge_sha: (if $ms == "" then null else $ms end)}' \
+    merge_sha: (if $ms == "" then null else $ms end),
+    reverted: (if $rv == "" then null else $rv end)}' \
   >"${artifact_dir}/flat-gate.json"
 
 flat_dir="$artifact_dir"
@@ -92,14 +117,14 @@ record AS (
   FROM read_json_auto('${flat_dir}/return-record.json')
 ),
 gate AS (
-  SELECT item_url, run_id, head_sha, gate_conclusion, merged_at, merge_sha
+  SELECT item_url, run_id, head_sha, gate_conclusion, merged_at, merge_sha, reverted
   FROM read_json_auto('${flat_dir}/flat-gate.json')
 )
 SELECT w.item_url, w.run_id, w.trace_id, w.schema_url,
        s.session_emissions,
        r.work_class, r.fire_kind, r.attested, r.pr_url,
        g.head_sha, g.gate_conclusion, g.merged_at, g.merge_sha,
-       NULL AS reverted -- TODO(#778): revert detection (later commit/PR reverting merge_sha)
+       g.reverted
 FROM wrapper w
 JOIN session s USING (item_url, run_id)
 JOIN record r USING (item_url, run_id)

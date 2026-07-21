@@ -17,6 +17,13 @@ readonly _DRAIN_COMMON_LOADED=1
 DRAIN_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly DRAIN_REPO_ROOT
 
+# Directory holding this lib and its sidecar assets (candidate-filter.jq). The
+# candidate-eligibility jq program lives in a file both drain-next.sh (via
+# drain_select_candidates) and the gate test runner read, so the test cannot
+# drift from production.
+DRAIN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly DRAIN_LIB_DIR
+
 # Durable surfaces anchor to the MAIN checkout, not the current working tree:
 # scheduler surfaces run these scripts from ephemeral worktrees, and evidence
 # appended to a worktree-relative path is lost when the worktree is pruned.
@@ -37,6 +44,12 @@ readonly DRAIN_GATE_CHECK_NAME="deterministic-gate"
 # Per-run work branch: dispatch creates `<prefix>/<issue>/<run_id>`.
 # shellcheck disable=SC2034  # consumed by dispatch-item.sh / drain-next.sh, which source this lib
 readonly DRAIN_BRANCH_PREFIX="autonomy/drain"
+
+# The C2 accumulation window opens at the first GENUINE scheduled fire; warm-up
+# and manual rows completed before it never count toward the C2 predicate.
+# predicate-c2.sh passes this into the DuckDB query (completed_at >= start).
+# shellcheck disable=SC2034  # consumed by predicate-c2.sh via sed substitution
+readonly DRAIN_WINDOW_START_UTC="2026-07-21T08:05:40Z"
 
 # Run worktrees dispatch materializes for the inner session, kept OUTSIDE the
 # repo tree (a sibling dir) so git never sees them as working-tree changes.
@@ -164,4 +177,76 @@ drain_new_run_id() {
 drain_record_run() {
   mkdir -p "$DRAIN_ARTIFACT_DIR"
   printf '%s\n' "$1" >>"$DRAIN_RUN_STATE"
+}
+
+# drain_select_candidates <label> — read raw tracker list-items JSON on stdin and
+# emit eligible candidates as `<id>\t<url>` TSV, one per line, sorted by issue
+# number: items carrying <label> AND unblocked AND unassigned. The eligibility
+# jq program is candidate-filter.jq (shared with the gate test runner, so the test
+# cannot drift from production).
+#
+# The trailing `tr -d '\r'` strips the carriage return jq.exe appends to each
+# output line under Windows text-mode stdout: without it the CR rides into the
+# last @tsv field and contaminates every downstream item_url (seen historically as
+# "...issues/10\r" in drain-runs.jsonl). Stripping here — at the one boundary the
+# value crosses into this pipeline — fixes it once for every consumer, rather than
+# per downstream use. jq.exe is the actual injection point (the tracker adapter's
+# output is CR-free); this strip also hardens the seam against any future adapter
+# that emits CR.
+drain_select_candidates() {
+  local lbl="$1"
+  jq -r --arg lbl "$lbl" -f "${DRAIN_LIB_DIR}/candidate-filter.jq" | tr -d '\r'
+}
+
+# drain_revert_sha <repo_dir> <merge_sha> <ref> — SHA of a commit reachable from
+# <ref> but not from <merge_sha> whose message reverts the merge ("This reverts
+# commit <full merge_sha>", the line both `git revert` and GitHub's Revert-PR
+# button write). In the normal case (<merge_sha> on <ref>'s history) that set is
+# the commits AFTER the merge. Reads committed history only; the caller refreshes
+# <ref> first so the read observes the merged-then-reverted state.
+#
+# Return contract — the caller MUST distinguish these, because "unknown" feeds the
+# eligibility gate and must fail CLOSED:
+#   rc 0, empty  -> determinable AND unreverted (the legitimate clean case)
+#   rc 0, sha    -> reverted (prints the reverting commit's sha)
+#   rc != 0      -> UNDETERMINABLE: git could not read the range (<ref> or
+#                   <merge_sha> unfetched/invalid). NEVER treat as clean.
+drain_revert_sha() {
+  local repo_dir="$1" merge_sha="$2" ref="${3:-origin/main}" out rc
+  [[ -n "$merge_sha" ]] || {
+    printf ''
+    return 0
+  }
+  # Capture git's own exit separately from the pipeline so a read failure is not
+  # masked into an empty "no match" (which would fail open).
+  out="$(git -C "$repo_dir" log --format=%H --fixed-strings \
+    --grep="This reverts commit ${merge_sha}" "${merge_sha}..${ref}" 2>/dev/null)"
+  rc=$?
+  [[ "$rc" -eq 0 ]] || return "$rc"
+  printf '%s\n' "${out%%$'\n'*}"
+}
+
+# drain_reconcile_title <kind> <run_id> <issue> — the identity-carrying title a
+# reconcile tracker item is keyed on. Dedup logic (drain_file_reconcile_item and
+# the merged-but-open decision) compares against it, so the format lives here once.
+drain_reconcile_title() {
+  printf '[drain-reconcile] %s: run %s item #%s\n' "$1" "$2" "$3"
+}
+
+# drain_merged_but_open_flags <open_c2> <existing_titles> — PURE decision for the
+# double-drain guard (no gh/network; all inputs supplied). Reads the merged-drain-PR
+# map on stdin as "<issue>\t<pr>\t<run_id>" lines; <open_c2> is a newline-separated
+# list of open C2-labelled issue numbers; <existing_titles> is the newline-separated
+# already-open reconcile titles. Emits "<issue>\t<pr>\t<run_id>" for each merged PR
+# whose issue is still OPEN+C2 AND has no reconcile item already filed (idempotent
+# dedup by drain_reconcile_title). Extracted so it is unit-testable off fixtures.
+drain_merged_but_open_flags() {
+  local open_c2="$1" existing_titles="$2" issue pr run title
+  while IFS=$'\t' read -r issue pr run; do
+    [[ -n "$issue" ]] || continue
+    printf '%s\n' "$open_c2" | grep -qxF "$issue" || continue
+    title="$(drain_reconcile_title "merged-but-open" "${run:-unknown}" "$issue")"
+    printf '%s\n' "$existing_titles" | grep -qxF "$title" && continue
+    printf '%s\t%s\t%s\n' "$issue" "$pr" "$run"
+  done
 }
