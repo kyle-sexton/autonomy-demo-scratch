@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "items": [
+    {"id": "github:o/r#10", "title": "eligible", "state": "open", "assignees": [], "labels": ["work-class: c2"], "blocked_by_count": 0, "url": "https://github.com/o/r/issues/10"},
+    {"id": "github:o/r#11", "title": "unlabeled", "state": "open", "assignees": [], "labels": ["bug"], "blocked_by_count": 0, "url": "https://github.com/o/r/issues/11"},
+    {"id": "github:o/r#12", "title": "assigned", "state": "open", "assignees": ["someone"], "labels": ["work-class: c2"], "blocked_by_count": 0, "url": "https://github.com/o/r/issues/12"},
+    {"id": "github:o/r#13", "title": "blocked", "state": "open", "assignees": [], "labels": ["work-class: c2"], "blocked_by_count": 1, "url": "https://github.com/o/r/issues/13"},
+    {"id": "github:o/r#9", "title": "eligible-lower-number", "state": "open", "assignees": [], "labels": ["extra", "work-class: c2"], "blocked_by_count": 0, "url": "https://github.com/o/r/issues/9"}
+  ]
+}

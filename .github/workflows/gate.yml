@@ -1,10 +1,13 @@
 name: gate
 
 # Deterministic gate on every PR: judgment-free, model-free, no network beyond
-# the actions checkout. The check-run this job publishes (name: deterministic-gate)
-# is the independent gate surface verify-join.sh reads via the check-run API — the
-# agent never writes its own gate result. Check-name coupling: the job name here
-# MUST equal DRAIN_GATE_CHECK_NAME in tools/autonomy-demo/drain-common.sh.
+# the actions checkout. Three deterministic steps — ShellCheck, a pure-bash
+# behavioural test runner exercising the drain scripts (tools/autonomy-demo/tests,
+# jq + coreutils + git only, no installs/network/duckdb), and a JSON/JSONL validity
+# sweep. The check-run this job publishes (name: deterministic-gate) is the
+# independent gate surface verify-join.sh reads via the check-run API — the agent
+# never writes its own gate result. Check-name coupling: the job name here MUST
+# equal DRAIN_GATE_CHECK_NAME in tools/autonomy-demo/drain-common.sh.
 
 on:
   pull_request:
@@ -24,10 +27,16 @@ jobs:
       - uses: actions/checkout@v4
 
       # shellcheck and jq are preinstalled on the GitHub-hosted ubuntu image.
-      # Scope is the project-owned scripts; the vendored work-item-tracker tree is
-      # upstream-synced (its own repo owns its lint policy), so it is not gated here.
+      # Scope is the project-owned scripts (entrypoints + the test runner); the
+      # vendored work-item-tracker tree is upstream-synced (its own repo owns its
+      # lint policy), so it is not gated here.
       - name: ShellCheck (project scripts)
-        run: shellcheck -x tools/autonomy-demo/*.sh
+        run: shellcheck -x tools/autonomy-demo/*.sh tools/autonomy-demo/tests/*.sh
+
+      # Behavioural substance beyond lint: the real candidate-eligibility filter,
+      # the CR-stripping regression, revert detection, and pure helpers.
+      - name: Drain behavioural tests
+        run: bash tools/autonomy-demo/tests/run-tests.sh
 
       - name: JSON / JSONL validity sweep (tracked config)
         run: |

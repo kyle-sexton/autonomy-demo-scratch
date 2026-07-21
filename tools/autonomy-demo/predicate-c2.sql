@@ -8,16 +8,21 @@
 --
 -- Input is the combined per-run join output predicate-c2.sh materializes (one
 -- newline-delimited row per completed (item_url, run_id), each the verify-join
--- projection enriched with completed_at). The runner substitutes __JOIN_PATH__.
+-- projection enriched with completed_at). The runner substitutes __JOIN_PATH__
+-- and __WINDOW_START__ (DRAIN_WINDOW_START_UTC from drain-common.sh).
 --
--- Phase 1 honesty: `reverted` is always NULL (revert detection is TODO(#778)),
--- so human_revert_count is 0 by construction until #778 lands; and until the
--- Phase 2 Desktop scheduler attests scheduled-fire identity, no row carries
--- fire_kind='scheduled', so this stub returns zeros -- by design, not by defect.
+-- human_revert_count derives from the `reverted` column verify-join populates
+-- (the SHA of the commit reverting the merge, or NULL when unreverted).
+--
+-- Window bound: the accumulation window opens at the first genuine scheduled fire
+-- (DRAIN_WINDOW_START_UTC); warm-up and manual rows completed before it never
+-- count. Until the Phase 2 Desktop scheduler attests scheduled-fire identity, all
+-- counted rows are Phase 1 best-effort fire_kind='scheduled' stand-ins.
 WITH rows AS (
   SELECT *
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'scheduled'
+    AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 )
 SELECT
   COUNT(DISTINCT item_url || '#' || run_id) AS completions,
