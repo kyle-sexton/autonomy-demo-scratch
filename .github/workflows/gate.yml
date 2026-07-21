@@ -24,7 +24,7 @@ jobs:
     name: deterministic-gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # shellcheck and jq are preinstalled on the GitHub-hosted ubuntu image.
       # Scope is the project-owned scripts (entrypoints + the test runner); the
