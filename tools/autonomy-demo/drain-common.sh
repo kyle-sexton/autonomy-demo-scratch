@@ -17,7 +17,14 @@ readonly _DRAIN_COMMON_LOADED=1
 DRAIN_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly DRAIN_REPO_ROOT
 
-DRAIN_ARTIFACT_DIR="${DRAIN_ARTIFACT_DIR:-${DRAIN_REPO_ROOT}/.artifacts}"
+# Durable surfaces anchor to the MAIN checkout, not the current working tree:
+# scheduler surfaces run these scripts from ephemeral worktrees, and evidence
+# appended to a worktree-relative path is lost when the worktree is pruned.
+# --git-common-dir resolves to the main checkout's .git from any worktree.
+DRAIN_MAIN_ROOT="$(cd "$(git -C "$DRAIN_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+readonly DRAIN_MAIN_ROOT
+
+DRAIN_ARTIFACT_DIR="${DRAIN_ARTIFACT_DIR:-${DRAIN_MAIN_ROOT}/.artifacts}"
 # shellcheck disable=SC2034  # consumed by verify-join.sh / backup-evidence.sh, which source this lib
 DRAIN_PIPELINE="${DRAIN_ARTIFACT_DIR}/pipeline.jsonl"
 DRAIN_RUN_STATE="${DRAIN_ARTIFACT_DIR}/drain-runs.jsonl"
@@ -34,7 +41,7 @@ readonly DRAIN_BRANCH_PREFIX="autonomy/drain"
 # Run worktrees dispatch materializes for the inner session, kept OUTSIDE the
 # repo tree (a sibling dir) so git never sees them as working-tree changes.
 # Overridable for the Phase 2 Desktop scheduler surface.
-DRAIN_WORKTREE_ROOT="${DRAIN_WORKTREE_ROOT:-${DRAIN_REPO_ROOT%/*}/.autonomy-drain-worktrees}"
+DRAIN_WORKTREE_ROOT="${DRAIN_WORKTREE_ROOT:-${DRAIN_MAIN_ROOT%/*}/.autonomy-drain-worktrees}"
 
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
