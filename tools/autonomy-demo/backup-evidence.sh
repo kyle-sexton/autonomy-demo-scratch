@@ -5,9 +5,11 @@
 # snapshots. Zero agent tokens by design -- a plain OS-scheduler entrypoint (to
 # be wired to the Windows scheduler later; this is the script only).
 #
-# Config (all overridable):
-#   DRAIN_BACKUP_ROOT    backup destination root (default below)
-#   DRAIN_OTEL_STORE     OTel session store to snapshot (drain-common default)
+# Config:
+#   DRAIN_BACKUP_ROOT    backup destination root (REQUIRED; no machine-literal
+#                        default — unset fails closed)
+#   DRAIN_OTEL_STORE     OTel session store to snapshot (resolved by
+#                        drain_otel_store: env -> binding run_link_prefix)
 #   DRAIN_BACKUP_RETAIN  snapshots to keep (default 14)
 #
 # Usage: backup-evidence.sh
@@ -18,8 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drain-common.sh
 source "$SCRIPT_DIR/drain-common.sh"
 
-backup_root="${DRAIN_BACKUP_ROOT:-C:/ProgramData/local-otel/evidence-backups}"
-store="$DRAIN_OTEL_STORE"
+backup_root="${DRAIN_BACKUP_ROOT:-}"
+[[ -n "$backup_root" ]] || {
+  echo "backup-evidence.sh: set DRAIN_BACKUP_ROOT to the backup destination root (no machine-literal default)" >&2
+  exit 2
+}
+store="$(drain_otel_store)"
 retain="${DRAIN_BACKUP_RETAIN:-14}"
 [[ "$retain" =~ ^[0-9]+$ ]] || {
   echo "backup-evidence.sh: DRAIN_BACKUP_RETAIN must be a non-negative integer" >&2

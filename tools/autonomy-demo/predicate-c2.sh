@@ -13,7 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drain-common.sh
 source "$SCRIPT_DIR/drain-common.sh"
 
-store="${1:-$DRAIN_OTEL_STORE}"
+store="${1:-}"
+[[ -n "$store" ]] || store="$(drain_otel_store)"
 join_all="${DRAIN_ARTIFACT_DIR}/join-all.jsonl"
 mkdir -p "$DRAIN_ARTIFACT_DIR"
 : >"$join_all"

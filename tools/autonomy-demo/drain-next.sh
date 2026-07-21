@@ -134,7 +134,7 @@ drain_reconcile() {
 
     # 2a. Stranded lease: item still open under a dead run of ours.
     local istate
-    istate="$(gh issue view "$pissue" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
+    istate="$(gh issue view "$pissue" --repo "$(drain_owner_repo)" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
     if [[ "$istate" == "OPEN" ]]; then
       drain_file_reconcile_item "stranded-lease" "$prid" "$pissue" \
         "item still OPEN after a dead drain run held its lease (session_id=$prid); verify the lease and reclaim or reassign by hand"

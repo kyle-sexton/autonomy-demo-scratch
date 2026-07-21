@@ -17,7 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/drain-common.sh"
 
 issue="${1:?usage: verify-join.sh <issue-number> [<session-store-dir>]}"
-store="${2:-$DRAIN_OTEL_STORE}"
+store="${2:-}"
+[[ -n "$store" ]] || store="$(drain_otel_store)"
 
 owner_repo="$(drain_owner_repo)"
 item_url="$(drain_item_url "$owner_repo" "$issue")"

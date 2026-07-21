@@ -100,9 +100,15 @@ git -C "$DRAIN_REPO_ROOT" worktree add -b "$branch" "$worktree" HEAD >/dev/null
 # Contract-authored wrapper span + trace context; run_id is the join discriminator.
 trace_id="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 span_id="$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-start_ns="$(date +%s%N)"
+# Portable epoch-nanos: `date +%s%N` is GNU-only and yields silent garbage where
+# %N is unsupported. The join (verify-join.sh) never reads these times, so
+# second-resolution zero-padded to nanos is the simplest correct OTLP form.
+start_ns="$(date +%s)000000000"
 export TRACEPARENT="00-${trace_id}-${span_id}-01"
 export OTEL_RESOURCE_ATTRIBUTES="autonomy.work_item.url=${item_url},cicd.pipeline.run.id=${run_id},signal.work_class=${work_class}"
+
+# Evidence surfaces the inner agent must never write (wrapper-authored only).
+otel_store="$(drain_otel_store 2>/dev/null || true)"
 
 read -r -d '' inner_prompt <<PROMPT || true
 You are an autonomous ${work_class} mechanical-maintenance worker resolving GitHub
@@ -118,7 +124,9 @@ branch '${branch}'. Do exactly the following, then STOP:
 5. Open a pull request referencing issue #${issue}: gh pr create --head ${branch} --fill
 
 FORBIDDEN: do NOT merge the PR; do NOT close the issue; do NOT push to the default
-branch; do NOT modify .claude/autonomy/** or change any issue labels. Open the PR
+branch; do NOT modify .claude/autonomy/** or change any issue labels; do NOT write
+to the evidence surfaces .artifacts/** or the OTel session store (${otel_store:-the
+local OTel session store directory}) — those are wrapper-authored only. Open the PR
 and stop.
 PROMPT
 
@@ -149,7 +157,10 @@ pr_url="$(gh pr list --repo "$owner_repo" --head "$branch" --state all \
   --json url --jq '.[0].url // empty')"
 
 # WP3 return-accounting record (marker-keyed, create-only). No issue close, no
-# merge — the human merges during the C2 accumulation window.
+# merge — the human merges during the C2 accumulation window. The attested-to
+# owner is resolved at runtime (binding producer_identity, else `gh api user`),
+# never a script literal.
+operator_login="$(drain_operator_login)"
 if ! gh issue view "$issue" --json comments --jq '.comments[].body' | grep -qF 'autonomy:return-accounting:v1'; then
   gh issue comment "$issue" --body-file - <<EOF
 <!-- autonomy:return-accounting:v1 -->
@@ -164,11 +175,11 @@ if ! gh issue view "$issue" --json comments --jq '.comments[].body' | grep -qF '
   "pr_url": "${pr_url}",
   "attested": false,
   "attestation_request": "${item_url}",
-  "attestation_owner": { "identity": "kyle-sexton", "role": "requester" }
+  "attestation_owner": { "identity": "${operator_login}", "role": "requester" }
 }
 \`\`\`
 
-@kyle-sexton This item was worked autonomously; a PR is open awaiting your review and merge. Two questions:
+@${operator_login} This item was worked autonomously; a PR is open awaiting your review and merge. Two questions:
 
 1. **Would you have spent engineering effort on this anyway?** — \`yes\` / \`no\` / \`partial\`
 2. **What would it have cost in manual eng-hours?** — \`<1h\` / \`1-4h\` / \`4h-1d\` / \`1d-1w\` / \`1w-1mo\` / \`>1mo\`
