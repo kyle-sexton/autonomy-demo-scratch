@@ -1,5 +1,7 @@
 # autonomy-demo-scratch
 
+[![deterministic-gate](https://github.com/kyle-sexton/autonomy-demo-scratch/actions/workflows/gate.yml/badge.svg)](https://github.com/kyle-sexton/autonomy-demo-scratch/actions/workflows/gate.yml)
+
 Standing autonomy proving ground (role ratified 2026-07-20, matching the GitHub
 repo description): a neutral target for return-accounting / trigger-dispatch
 demos, routine runs, and the eventual C2-promotion evidence drain.
