@@ -1,0 +1,55 @@
+name: gate
+
+# Deterministic gate on every PR: judgment-free, model-free, no network beyond
+# the actions checkout. The check-run this job publishes (name: deterministic-gate)
+# is the independent gate surface verify-join.sh reads via the check-run API — the
+# agent never writes its own gate result. Check-name coupling: the job name here
+# MUST equal DRAIN_GATE_CHECK_NAME in tools/autonomy-demo/drain-common.sh.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-gate:
+    name: deterministic-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # shellcheck and jq are preinstalled on the GitHub-hosted ubuntu image.
+      # Scope is the project-owned scripts; the vendored work-item-tracker tree is
+      # upstream-synced (its own repo owns its lint policy), so it is not gated here.
+      - name: ShellCheck (project scripts)
+        run: shellcheck -x tools/autonomy-demo/*.sh
+
+      - name: JSON / JSONL validity sweep (tracked config)
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if ! jq empty "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::invalid JSON"
+              fail=1
+            fi
+          done < <(git ls-files '*.json')
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            n=0
+            while IFS= read -r line; do
+              n=$((n + 1))
+              [ -n "$line" ] || continue
+              if ! printf '%s' "$line" | jq empty >/dev/null 2>&1; then
+                echo "::error file=$f,line=$n::invalid JSONL"
+                fail=1
+              fi
+            done < "$f"
+          done < <(git ls-files '*.jsonl')
+          exit "$fail"
