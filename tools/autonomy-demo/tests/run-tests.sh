@@ -368,7 +368,7 @@ assert_eq "complete runs: missing file yields empty array (rc 0)" \
 # Fail-closed: a PRESENT but malformed run-state file must make the enumerator FAIL
 # (non-zero), never mask a parse error into an empty result — watch-demotion aborts on it.
 tests_run=$((tests_run + 1))
-if drain_complete_runs "$FIXTURES/drain-runs-malformed.jsonl" >/dev/null 2>&1; then
+if drain_complete_runs "$FIXTURES/drain-runs-malformed.jsonl.malformed" >/dev/null 2>&1; then
   faild "drain_complete_runs: FAILS CLOSED (non-zero) on malformed jsonl"
 else
   pass "drain_complete_runs: FAILS CLOSED (non-zero) on malformed jsonl"
@@ -403,7 +403,7 @@ fi
 # Fail-closed: a PRESENT but corrupt/truncated events file must NOT read as "not recorded"
 # (rc 1, which would append blindly and defeat dedup forever) — it must return the distinct
 # fail-closed code (rc 3) so record_event aborts loud. Mirrors the drain-runs-malformed guard.
-if drain_demotion_already_recorded "revert" "abc123" "$FIXTURES/demotion-events-malformed.jsonl"; then
+if drain_demotion_already_recorded "revert" "abc123" "$FIXTURES/demotion-events-malformed.jsonl.malformed"; then
   dedup_corrupt_rc=0
 else
   dedup_corrupt_rc=$?
