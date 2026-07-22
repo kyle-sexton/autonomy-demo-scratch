@@ -32,9 +32,13 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   transcript evidence.
 - `backup-evidence.sh` — snapshots the evidence surfaces to a timestamped
   backup folder and prunes to the last N snapshots.
+- `watch-demotion.sh` — post-merge demotion net: gate re-check on drained
+  merges plus revert scan, appends `demotion-events.jsonl`, fail-closed.
 
 Evidence files under `.artifacts/`:
 
 - `drain-runs.jsonl` — per-run drain state, written by `drain-next.sh`.
 - `fire-attestations.jsonl` — recorded fire-origin attestations, appended
   by `attest-fire-origin.sh --record`.
+- `demotion-events.jsonl` — post-merge demotion events, appended by
+  `watch-demotion.sh`.
