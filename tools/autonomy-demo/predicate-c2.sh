@@ -67,7 +67,7 @@ while [[ "$i" -lt "$n" ]]; do
 done
 
 if [[ ! -s "$join_all" ]]; then
-  echo '[{"completions":0,"window_span_days":0,"gate_pass_rate":0.0,"human_revert_count":0,"predicate_eligible":false}]'
+  echo '[{"completions":0,"completions_mature":0,"window_span_days":0,"gate_pass_rate":0.0,"human_revert_count":0,"predicate_eligible":false}]'
   exit 0
 fi
 
@@ -107,6 +107,24 @@ attest_map="$(printf '%s\n' "$attest_ndjson" \
 jq -c --argjson m "$attest_map" '. + {fire_attested: ($m[.run_id] // false)}' \
   "$join_all" >"${join_all}.attested"
 mv "${join_all}.attested" "$join_all"
+
+# Enrich each join row with completion_mature: true when the row's PR merged at least
+# DRAIN_MERGE_MATURITY_S before now. The SQL's >=20 threshold counts only mature rows;
+# an unmerged or freshly merged completion is simply not YET mature (not an error).
+# The maturity decision is computed here via the shared drain_merge_is_mature so it
+# lives in ONE place and stays unit-testable without duckdb (tests/run-tests.sh has no
+# duckdb). Like fire_attested, the column must be on EVERY row (duckdb infers the
+# schema from these rows), so every row is rewritten. merged_at comes from verify-join
+# (GitHub PR data), null when unmerged; `tr -d '\r'` guards the jq.exe CRLF boundary.
+now_epoch="$(date -u +%s)"
+: >"${join_all}.mature"
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  merged_at="$(jq -r '.merged_at // ""' <<<"$line" | tr -d '\r')"
+  mature="$(drain_merge_is_mature "$merged_at" "$now_epoch")"
+  jq -c --argjson mt "$mature" '. + {completion_mature: $mt}' <<<"$line"
+done <"$join_all" >>"${join_all}.mature"
+mv "${join_all}.mature" "$join_all"
 
 join_path="$join_all"
 if command -v cygpath >/dev/null 2>&1; then join_path="$(cygpath -m "$join_all")"; fi

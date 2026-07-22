@@ -10,7 +10,10 @@
 # scheduled, NOT an adversarial operator. An operator owns the machine and could
 # forge transcripts; defending against that is out of scope. Residual (accepted and
 # documented): a manual Run-now that happens to enqueue within DRAIN_FIRE_TOLERANCE_S
-# of the top of the hour attests falsely as scheduled.
+# of ANY grid slot attests falsely as scheduled. At the 15-min cadence that residual
+# is ~4x the hourly grid's (four slots per hour, not one) — inherent to the higher
+# cadence; DRAIN_FIRE_TOLERANCE_S is sized for headroom over genuine dispatch delay,
+# not to shrink this residual.
 #
 # Read-only except with --record, which materializes each NEWLY-computed POSITIVE
 # attestation to DRAIN_ATTESTATIONS (durability across transcript garbage-collection).
@@ -107,7 +110,10 @@ for run_id in "$@"; do
   # enqueue (across files AND across records within a file), counting each one whose
   # enqueue precedes the run start by 0..DRAIN_ATTEST_JOIN_WINDOW_S. Exactly one must
   # remain; >1 fails closed as ambiguous rather than picking one arbitrarily. Adjacent
-  # hourly fires stay single-candidate (3600s slot spacing > the 900s window).
+  # 15-min fires stay single-candidate: slots are 900s apart (== the join window), but
+  # a run starts >=~30s after ITS OWN enqueue, so the PREVIOUS slot's enqueue lands
+  # >900s before the run start and falls out of the window (the next slot's enqueue is
+  # after the run start, negative delta). The margin is thinner than the hourly grid's.
   origin_file="" origin_ts="" origin_epoch="" origin_count=0
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
@@ -134,13 +140,12 @@ for run_id in "$@"; do
     continue
   fi
 
-  # 6. Cron-slot alignment: seconds elapsed since the most recent slot (minute
-  # DRAIN_CRON_SLOT_MINUTE of the hour, UTC-aligned).
-  slot_sec=$((DRAIN_CRON_SLOT_MINUTE * 60))
-  offset=$((origin_epoch % 3600 - slot_sec))
-  if (( offset < 0 )); then
-    offset=$((offset + 3600))
-  fi
+  # 6. Cron-slot alignment: seconds elapsed since the most recent slot on the grid
+  # (period DRAIN_SLOT_PERIOD_MINUTES, anchored at minute DRAIN_SLOT_ANCHOR_MINUTE,
+  # UTC-aligned). offset = ((epoch - anchor) mod period), non-negative.
+  period_sec=$((DRAIN_SLOT_PERIOD_MINUTES * 60))
+  anchor_sec=$((DRAIN_SLOT_ANCHOR_MINUTE * 60))
+  offset=$(( ( (origin_epoch - anchor_sec) % period_sec + period_sec ) % period_sec ))
   if (( offset > DRAIN_FIRE_TOLERANCE_S )); then
     emit "$run_id" 0 "off-schedule" "$origin_ts" "$origin_file" "$offset"
     continue

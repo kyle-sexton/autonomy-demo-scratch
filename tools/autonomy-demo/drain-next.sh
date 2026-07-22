@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Hourly drain entrypoint (autonomy-ignition Phase 1). One firing:
+# Scheduled drain entrypoint (autonomy-ignition Phase 1); fires on the grid defined by
+# DRAIN_SLOT_PERIOD_MINUTES/DRAIN_SLOT_ANCHOR_MINUTE (every 15 min). One firing:
 #
 #   (a) reconcile preamble — remove orphaned run worktrees this pipeline left
 #       behind; DETECT (never break) stranded leases from this pipeline's own
@@ -7,7 +8,7 @@
 #       filing a human-gated tracker item via the seam for anything it cannot
 #       safely auto-fix;
 #   (b) claim the first eligible C2-labelled open item via the tracker seam
-#       (2h lease TTL, per-run --session-id);
+#       (DRAIN_LEASE_TTL_HOURS lease TTL — 1h stopgap; per-run --session-id);
 #   (c) dispatch the claimed item (open PR, stop — never merge/close);
 #   (d) print `no-work` and exit 0 on an empty queue (a valid fire).
 #
@@ -235,7 +236,7 @@ claimed_id="" claimed_url="" claimed_num=""
 for row in "${candidates[@]}"; do
   IFS=$'\t' read -r cid curl <<<"$row"
   set +e
-  "$ADAPTER_DIR/claim.sh" "$cid" --ttl-hours 2 --session-id "$run_id" >/dev/null
+  "$ADAPTER_DIR/claim.sh" "$cid" --ttl-hours "$DRAIN_LEASE_TTL_HOURS" --session-id "$run_id" >/dev/null
   rc=$?
   set -e
   if [[ "$rc" -eq 0 ]]; then

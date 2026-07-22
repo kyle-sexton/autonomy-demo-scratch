@@ -14,6 +14,16 @@
 -- human_revert_count derives from the `reverted` column verify-join populates
 -- (the SHA of the commit reverting the merge, or NULL when unreverted).
 --
+-- Completion maturity: the >=20-completions threshold counts only completions whose
+-- PR merged >=48h before evaluation time (predicate-c2.sh enriches each row with a
+-- completion_mature boolean via drain_merge_is_mature; the maturity decision is
+-- computed in the shell so it stays unit-testable without duckdb). `completions` is
+-- the raw attested count and `completions_mature` the count the gate uses; both are
+-- surfaced. window_span_days spans the MATURE completions only (the same row set as
+-- completions_mature): otherwise a burst of mature completions clustered in a few days
+-- plus one young straggler far later would satisfy the count and the span gates on
+-- DISJOINT evidence — the exact burst shape the maturity guard exists to block.
+--
 -- Window bound: the accumulation window opens at the first genuine scheduled fire
 -- (DRAIN_WINDOW_START_UTC); warm-up and manual rows completed before it never count.
 --
@@ -31,8 +41,12 @@ WITH rows AS (
 )
 SELECT
   COUNT(DISTINCT item_url || '#' || run_id) AS completions,
+  COUNT(DISTINCT CASE WHEN completion_mature THEN item_url || '#' || run_id END)
+    AS completions_mature,
   COALESCE(
-    DATE_DIFF('day', MIN(completed_at::TIMESTAMP), MAX(completed_at::TIMESTAMP)),
+    DATE_DIFF('day',
+      MIN(completed_at::TIMESTAMP) FILTER (WHERE completion_mature),
+      MAX(completed_at::TIMESTAMP) FILTER (WHERE completion_mature)),
     0
   ) AS window_span_days,
   -- pass rate over rows that HAVE a gate outcome (AVG skips NULLs); no gates yet -> 0
@@ -43,11 +57,14 @@ SELECT
     0.0
   ) AS gate_pass_rate,
   COUNT(*) FILTER (WHERE reverted IS NOT NULL) AS human_revert_count,
-  -- eligibility mirrors the suggested default; a NULL/absent gate fails closed
-  (COUNT(DISTINCT item_url || '#' || run_id) >= 20
+  -- eligibility mirrors the suggested default; a NULL/absent gate fails closed. Both
+  -- the >=20 count and the >=7-day span are over mature (>=48h-merged) completions only.
+  (COUNT(DISTINCT CASE WHEN completion_mature THEN item_url || '#' || run_id END) >= 20
    AND COALESCE(
-         DATE_DIFF('day', MIN(completed_at::TIMESTAMP), MAX(completed_at::TIMESTAMP)),
-         0) >= 14
+         DATE_DIFF('day',
+           MIN(completed_at::TIMESTAMP) FILTER (WHERE completion_mature),
+           MAX(completed_at::TIMESTAMP) FILTER (WHERE completion_mature)),
+         0) >= 7
    AND COALESCE(MIN(CASE WHEN gate_conclusion = 'success' THEN 1 ELSE 0 END), 0) = 1
    AND COUNT(*) FILTER (WHERE reverted IS NOT NULL) = 0) AS predicate_eligible
 FROM rows;
