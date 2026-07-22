@@ -1,0 +1,37 @@
+name: predicate-sql-test
+
+# Separate additive tier from gate.yml: exercises the duckdb-backed predicate-c2.sql
+# eligibility test (tools/autonomy-demo/tests/predicate-c2-sql.test.sh), which the
+# deterministic gate deliberately excludes (no-install policy). Runs only when files
+# under tools/autonomy-demo/** change.
+
+on:
+  pull_request:
+    paths:
+      - "tools/autonomy-demo/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: predicate-sql-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  predicate-sql-test:
+    name: predicate-sql-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install duckdb CLI
+        run: |
+          set -euo pipefail
+          curl https://install.duckdb.org | sh
+          echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
+
+      - name: predicate-c2.sql duckdb test
+        run: bash tools/autonomy-demo/tests/predicate-c2-sql.test.sh
