@@ -57,14 +57,16 @@ pr_url="$(jq -r '.pr_url // empty' "${artifact_dir}/return-record.json" 2>/dev/n
 run_id="$(jq -r '.run_id // empty' "${artifact_dir}/return-record.json" 2>/dev/null || true)"
 head_sha="" merged_at="" merge_sha="" gate_conclusion="" reverted=""
 if [[ -n "$pr_url" ]]; then
-  pr_json="$(gh pr view "$pr_url" --json headRefOid,mergedAt,mergeCommit 2>/dev/null || echo '{}')"
-  head_sha="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
-  merged_at="$(jq -r '.mergedAt // empty' <<<"$pr_json")"
-  merge_sha="$(jq -r '.mergeCommit.oid // empty' <<<"$pr_json")"
+  # Fail-SOFT resolution: this join emits null fields when merge/gate state is
+  # unavailable (PR not yet open, gate pending, not yet merged). A gh failure from the
+  # shared helper (rc != 0) leaves the pre-initialized empties in place — same as the
+  # prior inline `|| echo '{}'` — rather than aborting. (The revert path below is the
+  # one that fails CLOSED, because revert status feeds the C2 eligibility gate.)
+  if merge_state="$(drain_pr_merge_state "$pr_url")"; then
+    IFS=$'\t' read -r head_sha merge_sha merged_at <<<"$merge_state"
+  fi
   if [[ -n "$head_sha" ]]; then
-    gate_conclusion="$(gh api "repos/${owner_repo}/commits/${head_sha}/check-runs" \
-      --jq "[.check_runs[] | select(.name == \"${DRAIN_GATE_CHECK_NAME}\")][0].conclusion // empty" \
-      2>/dev/null || true)"
+    gate_conclusion="$(drain_gate_conclusion "$owner_repo" "$head_sha")" || gate_conclusion=""
   fi
   # Revert detection over origin/main. reverted = the SHA of the commit reverting
   # this merge, or null when confirmed unreverted. This FAILS CLOSED: revert status

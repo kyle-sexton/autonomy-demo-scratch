@@ -331,6 +331,107 @@ assert_eq "merge maturity: timezone-naive timestamp fails closed (not mature)" \
 assert_eq "merge maturity: explicit +00:00 offset accepted (mature)" \
   "$(drain_merge_is_mature "$offset_iso" "$now_ref")" "true"
 
+# --- 12. post-merge demotion watcher (watch-demotion.sh) --------------------
+# Pure, network-free coverage of the watcher's decision helpers (hosted in
+# drain-common.sh). The network orchestration (gh pr view / check-run API, merge-commit-
+# first gate resolution) is not unit-tested here — no gh/network in this tier — but the
+# load-bearing decisions are: the gate verdict, complete-run enumeration + its fail-closed
+# contract, revert detection (section 3 above, reused directly by Check B), and the
+# idempotency key.
+
+# 12a. drain_gate_verdict — success is the ONLY clean conclusion; every non-success enum
+# value AND an empty (no gate check-run on a merged PR = bypass) are contrary; an
+# unrecognized token is indeterminate (fail closed).
+assert_eq "gate verdict: success -> clean" "$(drain_gate_verdict success)" "clean"
+assert_eq "gate verdict: failure -> contrary" "$(drain_gate_verdict failure)" "contrary"
+assert_eq "gate verdict: cancelled -> contrary" "$(drain_gate_verdict cancelled)" "contrary"
+assert_eq "gate verdict: timed_out -> contrary" "$(drain_gate_verdict timed_out)" "contrary"
+assert_eq "gate verdict: action_required -> contrary" "$(drain_gate_verdict action_required)" "contrary"
+assert_eq "gate verdict: stale -> contrary" "$(drain_gate_verdict stale)" "contrary"
+assert_eq "gate verdict: skipped -> contrary" "$(drain_gate_verdict skipped)" "contrary"
+assert_eq "gate verdict: neutral -> contrary" "$(drain_gate_verdict neutral)" "contrary"
+assert_eq "gate verdict: startup_failure -> contrary" "$(drain_gate_verdict startup_failure)" "contrary"
+assert_eq "gate verdict: empty (no gate check-run on merged PR) -> contrary" "$(drain_gate_verdict '')" "contrary"
+assert_eq "gate verdict: unrecognized token -> indeterminate (fail closed)" \
+  "$(drain_gate_verdict some_new_conclusion)" "indeterminate"
+
+# 12b. drain_complete_runs — last-status-per-run_id, filtered to complete. The fixture has
+# run A (dispatched then complete: object-merged so the complete row's pr_url survives),
+# run B (claimed only: excluded), run C (complete). Expect [A, C] with A carrying pull/1.
+complete="$(drain_complete_runs "$FIXTURES/drain-runs-sample.jsonl")"
+assert_eq "complete runs: only complete run_ids, in insertion order" \
+  "$(jq -r '[.[].run_id] | join(",")' <<<"$complete")" "A,C"
+assert_eq "complete runs: last-status merge keeps run A's terminal pr_url" \
+  "$(jq -r '.[] | select(.run_id == "A") | .pr_url' <<<"$complete")" "https://x/pull/1"
+assert_eq "complete runs: missing file yields empty array (rc 0)" \
+  "$(drain_complete_runs "$FIXTURES/does-not-exist.jsonl")" "[]"
+# Fail-closed: a PRESENT but malformed run-state file must make the enumerator FAIL
+# (non-zero), never mask a parse error into an empty result — watch-demotion aborts on it.
+tests_run=$((tests_run + 1))
+if drain_complete_runs "$FIXTURES/drain-runs-malformed.jsonl.malformed" >/dev/null 2>&1; then
+  faild "drain_complete_runs: FAILS CLOSED (non-zero) on malformed jsonl"
+else
+  pass "drain_complete_runs: FAILS CLOSED (non-zero) on malformed jsonl"
+fi
+
+# 12c. drain_demotion_already_recorded — idempotency key is (kind, merge_sha). The fixture
+# holds one revert event for merge abc123.
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "revert" "abc123" "$FIXTURES/demotion-events-sample.jsonl"; then
+  pass "demotion dedup: (revert, abc123) is already recorded"
+else
+  faild "demotion dedup: (revert, abc123) is already recorded"
+fi
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "revert" "def456" "$FIXTURES/demotion-events-sample.jsonl"; then
+  faild "demotion dedup: (revert, def456) is NOT recorded (different merge_sha)"
+else
+  pass "demotion dedup: (revert, def456) is NOT recorded (different merge_sha)"
+fi
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "gate-regression" "abc123" "$FIXTURES/demotion-events-sample.jsonl"; then
+  faild "demotion dedup: (gate-regression, abc123) is NOT recorded (different kind)"
+else
+  pass "demotion dedup: (gate-regression, abc123) is NOT recorded (different kind)"
+fi
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "revert" "abc123" "$FIXTURES/no-events-file.jsonl"; then
+  faild "demotion dedup: missing events file -> not recorded (rc 1)"
+else
+  pass "demotion dedup: missing events file -> not recorded (rc 1)"
+fi
+# Fail-closed: a PRESENT but corrupt/truncated events file must NOT read as "not recorded"
+# (rc 1, which would append blindly and defeat dedup forever) — it must return the distinct
+# fail-closed code (rc 3) so record_event aborts loud. Mirrors the drain-runs-malformed guard.
+if drain_demotion_already_recorded "revert" "abc123" "$FIXTURES/demotion-events-malformed.jsonl.malformed"; then
+  dedup_corrupt_rc=0
+else
+  dedup_corrupt_rc=$?
+fi
+assert_eq "demotion dedup: corrupt events file FAILS CLOSED (rc 3, not 1)" "$dedup_corrupt_rc" "3"
+
+# 12d. Idempotent re-run walk-through (the watcher's append contract, off fixtures / no
+# network). Append an event, then assert a second detection of the SAME (kind, merge_sha)
+# sees it already recorded (would skip the duplicate row) while a DIFFERENT merge_sha does
+# not — the exact guard record_event applies before appending.
+dedup_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp"' EXIT
+events_f="$dedup_tmp/demotion-events.jsonl"
+jq -cn '{detected_at:"2026-07-22T09:00:00Z", kind:"gate-regression", merge_sha:"feedface",
+  pr_url:"https://x/pull/9", run_id:"R9", detail:"gate on pr-head is failure"}' >>"$events_f"
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "gate-regression" "feedface" "$events_f"; then
+  pass "demotion re-run: freshly appended (gate-regression, feedface) is seen on re-detect"
+else
+  faild "demotion re-run: freshly appended (gate-regression, feedface) is seen on re-detect"
+fi
+tests_run=$((tests_run + 1))
+if drain_demotion_already_recorded "gate-regression" "cafed00d" "$events_f"; then
+  faild "demotion re-run: a new merge_sha is not yet recorded"
+else
+  pass "demotion re-run: a new merge_sha is not yet recorded"
+fi
+
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"
 if [[ "$tests_failed" -gt 0 ]]; then
