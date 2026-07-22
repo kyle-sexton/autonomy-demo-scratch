@@ -156,6 +156,19 @@ fi
 pr_url="$(gh pr list --repo "$owner_repo" --head "$branch" --state all \
   --json url --jq '.[0].url // empty')"
 
+# Post-create mechanical check: `gh pr create --fill` does not guarantee a
+# closing keyword gh recognizes for the claimed issue (#24 and #46 both shipped
+# `Refs #N`, needing a manual body fix pre-merge). Append one if missing; a safe
+# direct fix, not a human-gated reconcile filing.
+if [[ -n "$pr_url" ]]; then
+  pr_body="$(gh pr view "$pr_url" --json body --jq '.body // empty' 2>/dev/null || true)"
+  if ! grep -qiE "\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#${issue}\b" <<<"$pr_body"; then
+    new_body="${pr_body:+$pr_body$'\n\n'}Closes #${issue}"
+    printf '%s' "$new_body" | gh pr edit "$pr_url" --body-file - \
+      || echo "dispatch-item.sh: WARN could not append closing keyword to PR body" >&2
+  fi
+fi
+
 # WP3 return-accounting record (marker-keyed, create-only). No issue close, no
 # merge — the human merges during the C2 accumulation window. The attested-to
 # owner is resolved at runtime (binding producer_identity, else `gh api user`),
