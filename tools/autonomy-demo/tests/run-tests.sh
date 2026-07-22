@@ -117,6 +117,130 @@ assert_eq "drain_class_from_label: c4 -> C4" "$(drain_class_from_label 'work-cla
 assert_eq "drain_class_from_label: no token -> C2 default" "$(drain_class_from_label 'plain-label')" "C2"
 assert_eq "drain_item_url: builds the issue URL" "$(drain_item_url 'o/r' 42)" "https://github.com/o/r/issues/42"
 
+# --- 6. attest-fire-origin.sh -----------------------------------------------
+# Fire-origin attestation from outer-session transcript evidence. Env points the
+# transcript root, artifact dir, and attestations file at a throwaway tree; synthetic
+# transcripts match the real record shape (fact 1): an enqueue queue-operation first
+# line carrying the scheduled-task tag, then a filler line mentioning the run_id.
+ATTEST="$TEST_DIR/../attest-fire-origin.sh"
+attest_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp"' EXIT
+export DRAIN_TRANSCRIPT_ROOT="$attest_tmp/projects"
+export DRAIN_ARTIFACT_DIR="$attest_tmp/artifacts"
+export DRAIN_ATTESTATIONS="$attest_tmp/artifacts/fire-attestations.jsonl"
+proj="$DRAIN_TRANSCRIPT_ROOT/demo-slug"
+mkdir -p "$proj" "$DRAIN_ARTIFACT_DIR"
+
+enq_line() { # <enqueue_ts> — one task-tagged enqueue queue-operation record
+  jq -cn --arg ts "$1" --arg name "$DRAIN_SCHEDULED_TASK_NAME" \
+    '{content: ("<scheduled-task name=\"" + $name + "\" file=\"C:\\x\\SKILL.md\">\nbody\n</scheduled-task>"),
+      operation: "enqueue", sessionId: "sess", timestamp: $ts, type: "queue-operation"}'
+}
+fil_line() { # <run_id> — a filler record mentioning the run_id (as production logs it)
+  jq -cn --arg rid "$1" '{content: ("drain output run_id=" + $rid), type: "assistant"}'
+}
+mk_transcript() { # <file> <enqueue_ts> <run_id>
+  { enq_line "$2"; fil_line "$3"; } >"$1"
+}
+att_reason() { jq -r '.reason' <<<"$1"; }
+att_flag() { jq -r '.fire_attested' <<<"$1"; }
+att_ets() { jq -r '.enqueue_ts' <<<"$1"; }
+att_off() { jq -r '.slot_offset_s' <<<"$1"; }
+
+# 1. aligned: enqueue :05:25, run start :06:01 (within join window, within tolerance).
+mk_transcript "$proj/c1.jsonl" "2026-07-21T10:05:25.000Z" "scheduled-20260721T100601Z-aaaaaaaa"
+a1="$("$ATTEST" scheduled-20260721T100601Z-aaaaaaaa)"
+assert_eq "attest: aligned fire attested" "$(att_flag "$a1")" "true"
+assert_eq "attest: aligned reason slot-aligned" "$(att_reason "$a1")" "slot-aligned"
+
+# 2. off-schedule manual: origin transcript present, but enqueue at :36 past the hour.
+mk_transcript "$proj/c2.jsonl" "2026-07-21T10:36:27.000Z" "scheduled-20260721T104250Z-bbbbbbbb"
+a2="$("$ATTEST" scheduled-20260721T104250Z-bbbbbbbb)"
+assert_eq "attest: off-schedule not attested" "$(att_flag "$a2")" "false"
+assert_eq "attest: off-schedule reason" "$(att_reason "$a2")" "off-schedule"
+
+# 3. reconcile-only mention: the only transcript mentioning the run_id was enqueued
+# hours AFTER the run start (negative delta) — not the originating session.
+mk_transcript "$proj/c3.jsonl" "2026-07-21T15:05:00.000Z" "scheduled-20260721T120000Z-33333333"
+a3="$("$ATTEST" scheduled-20260721T120000Z-33333333)"
+assert_eq "attest: reconcile-only mention not attested" "$(att_flag "$a3")" "false"
+assert_eq "attest: reconcile-only reason no-origin-transcript" "$(att_reason "$a3")" "no-origin-transcript"
+
+# 4. missing transcript entirely.
+a4="$("$ATTEST" scheduled-20260721T130000Z-44444444)"
+assert_eq "attest: missing transcript not attested" "$(att_flag "$a4")" "false"
+assert_eq "attest: missing transcript reason no-origin-transcript" "$(att_reason "$a4")" "no-origin-transcript"
+
+# 5. ambiguous: run_id present in TWO transcripts both enqueued within the join window.
+mk_transcript "$proj/c5a.jsonl" "2026-07-21T14:05:20.000Z" "scheduled-20260721T140601Z-55555555"
+mk_transcript "$proj/c5b.jsonl" "2026-07-21T14:05:25.000Z" "scheduled-20260721T140601Z-55555555"
+a5="$("$ATTEST" scheduled-20260721T140601Z-55555555)"
+assert_eq "attest: ambiguous origin not attested" "$(att_flag "$a5")" "false"
+assert_eq "attest: ambiguous reason" "$(att_reason "$a5")" "ambiguous-origin"
+
+# 6. not-scheduled kind (manual-*): rejected before any transcript scan.
+a6="$("$ATTEST" manual-20260721T104250Z-cccccccc)"
+assert_eq "attest: manual kind not attested" "$(att_flag "$a6")" "false"
+assert_eq "attest: manual kind reason not-scheduled-kind" "$(att_reason "$a6")" "not-scheduled-kind"
+
+# 7. durability: --record case 1, delete its transcript, re-run --record -> still
+# attested from the recorded positive; the attestations file holds exactly one line
+# for the run_id across both records (idempotent append).
+rid7="scheduled-20260721T100601Z-aaaaaaaa"
+"$ATTEST" --record "$rid7" >/dev/null
+rm -f "$proj/c1.jsonl"
+a7="$("$ATTEST" --record "$rid7")"
+assert_eq "attest: durability survives transcript GC (attested)" "$(att_flag "$a7")" "true"
+assert_eq "attest: durability reason recorded" "$(att_reason "$a7")" "recorded"
+assert_eq "attest: recorded exactly once (idempotent append)" \
+  "$(grep -cF "$rid7" "$DRAIN_ATTESTATIONS")" "1"
+
+# 8. CR-carrying run_id argument (jq.exe CRLF boundary): a trailing CR must be
+# stripped so a real run_id attests identically to its clean form, and the emitted
+# run_id field must itself be CR-free. Reuse case 1's transcript (recreate it, since
+# case 7 deleted it) and pass the arg with a literal trailing CR.
+mk_transcript "$proj/c1.jsonl" "2026-07-21T10:05:25.000Z" "scheduled-20260721T100601Z-aaaaaaaa"
+a8="$("$ATTEST" $'scheduled-20260721T100601Z-aaaaaaaa\r')"
+assert_eq "attest: CR-carrying run_id attests as clean form" "$(att_flag "$a8")" "true"
+# Assert no CR is embedded in the emitted run_id VALUE. jq's contains() inspects the
+# string; the `tr -d '\r'` strips jq.exe's OWN line-ending CR on Windows at the
+# measurement boundary (a raw byte count would instead pick that up and false-fail).
+assert_eq "attest: CR-carrying run_id emits CR-free run_id" \
+  "$(jq -r '.run_id | contains("\r")' <<<"$a8" | tr -d '\r')" "false"
+
+# 9. Multiple task-tagged enqueues in ONE long-lived transcript. Each run_id must
+# resolve against ITS OWN enqueue record, not merely the file's first — otherwise a
+# later manual fire would inherit the earlier scheduled fire's slot alignment (false
+# positive) or a later legit fire would fall outside the window (false negative).
+# One file logs two fires: enqueue :05:25 spawning run A (start :06:01, aligned) and
+# enqueue :17:00 spawning run B (start :20:40, off-schedule). Run B's start is >900s
+# after the :05:25 enqueue, so ONLY its own :17:00 enqueue is in-window (a single
+# candidate), isolating the per-record resolution under test.
+runA="scheduled-20260721T100601Z-a1a1a1a1"
+runB="scheduled-20260721T102040Z-b2b2b2b2"
+{ enq_line "2026-07-21T10:05:25.000Z"; fil_line "$runA"
+  enq_line "2026-07-21T10:17:00.000Z"; fil_line "$runB"; } >"$proj/multi.jsonl"
+m1="$("$ATTEST" "$runA")"
+assert_eq "attest: multi-enqueue run A resolves to its own enqueue (aligned)" "$(att_flag "$m1")" "true"
+assert_eq "attest: multi-enqueue run A reason slot-aligned" "$(att_reason "$m1")" "slot-aligned"
+assert_eq "attest: multi-enqueue run A enqueue_ts is :05:25 (not merely first)" \
+  "$(att_ets "$m1")" "2026-07-21T10:05:25.000Z"
+m2="$("$ATTEST" "$runB")"
+assert_eq "attest: multi-enqueue run B resolves to its OWN later enqueue (not first)" \
+  "$(att_ets "$m2")" "2026-07-21T10:17:00.000Z"
+assert_eq "attest: multi-enqueue run B off-schedule" "$(att_reason "$m2")" "off-schedule"
+assert_eq "attest: multi-enqueue run B offset 1020" "$(att_off "$m2")" "1020"
+
+# 9c. Two in-window enqueues both matching a single run_id -> ambiguous (fail closed;
+# never pick one arbitrarily).
+runC="scheduled-20260721T100601Z-c3c3c3c3"
+{ enq_line "2026-07-21T10:05:20.000Z"; enq_line "2026-07-21T10:05:25.000Z"; fil_line "$runC"; } \
+  >"$proj/multi-ambiguous.jsonl"
+m3="$("$ATTEST" "$runC")"
+assert_eq "attest: two in-window enqueues for one run_id -> ambiguous" \
+  "$(att_reason "$m3")" "ambiguous-origin"
+assert_eq "attest: ambiguous multi-enqueue not attested" "$(att_flag "$m3")" "false"
+
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"
 if [[ "$tests_failed" -gt 0 ]]; then

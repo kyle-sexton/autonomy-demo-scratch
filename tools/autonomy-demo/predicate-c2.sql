@@ -15,13 +15,18 @@
 -- (the SHA of the commit reverting the merge, or NULL when unreverted).
 --
 -- Window bound: the accumulation window opens at the first genuine scheduled fire
--- (DRAIN_WINDOW_START_UTC); warm-up and manual rows completed before it never
--- count. Until the Phase 2 Desktop scheduler attests scheduled-fire identity, all
--- counted rows are Phase 1 best-effort fire_kind='scheduled' stand-ins.
+-- (DRAIN_WINDOW_START_UTC); warm-up and manual rows completed before it never count.
+--
+-- Fire origin is NOT taken from the fire_kind stamp (the Desktop task hardcodes
+-- --fire-kind, so a manual "Run now" self-stamps as scheduled). predicate-c2.sh
+-- attests each run's origin from outer-session transcript evidence and enriches each
+-- row with fire_attested; rows that fail attestation (fire_attested = false) are
+-- excluded here, fail-closed.
 WITH rows AS (
   SELECT *
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'scheduled'
+    AND fire_attested = true
     AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 )
 SELECT

@@ -71,6 +71,43 @@ if [[ ! -s "$join_all" ]]; then
   exit 0
 fi
 
+# Fire-origin attestation. The C2 predicate must NOT trust the fire_kind stamp: the
+# Desktop task hardcodes --fire-kind, so a manual "Run now" self-stamps as scheduled.
+# Attest each complete run's ORIGIN from outer-session transcript evidence (one
+# invocation over all run_ids), record positives durably, then enrich every join row
+# with fire_attested. An unattested row is a DESIGNED exclusion, not evidence
+# breakage, so it WARNS and the SQL drops it — it does NOT abort (contrast the
+# verify-join FATAL paths above, which stay as they are).
+# `tr -d '\r'` at this jq boundary: jq.exe emits CRLF under Windows text-mode stdout
+# (the same boundary drain_select_candidates guards), and a trailing CR rides into
+# each run_id — the attestation regex would then reject every real run_id.
+run_ids="$(jq -r '.[].run_id // empty' <<<"$complete_rows" | tr -d '\r' | sort -u)"
+attest_ndjson=""
+if [[ -n "$run_ids" ]]; then
+  mapfile -t rid_args <<<"$run_ids"
+  attest_ndjson="$("$SCRIPT_DIR/attest-fire-origin.sh" --record "${rid_args[@]}")"
+fi
+
+# One stderr warning per unattested run_id; the reason travels in the NDJSON row.
+if [[ -n "$attest_ndjson" ]]; then
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    rid="$(jq -r '.run_id' <<<"$line")"
+    reason="$(jq -r '.reason' <<<"$line")"
+    echo "predicate-c2: run ${rid} fire-origin unattested (${reason}) — excluded from predicate" >&2
+  done < <(printf '%s\n' "$attest_ndjson" | jq -c 'select(.fire_attested == false)')
+fi
+
+# Enrich each join row with fire_attested by run_id (default false when the run_id is
+# absent from the attestation output — fail closed). Rewrite join_all in place: DuckDB
+# infers the schema from these rows, so the column must be present on EVERY row (a
+# first row missing it would drop the column and break the SQL's fire_attested filter).
+attest_map="$(printf '%s\n' "$attest_ndjson" \
+  | jq -c -s 'map(select(.run_id != null) | {(.run_id): .fire_attested}) | add // {}')"
+jq -c --argjson m "$attest_map" '. + {fire_attested: ($m[.run_id] // false)}' \
+  "$join_all" >"${join_all}.attested"
+mv "${join_all}.attested" "$join_all"
+
 join_path="$join_all"
 if command -v cygpath >/dev/null 2>&1; then join_path="$(cygpath -m "$join_all")"; fi
 

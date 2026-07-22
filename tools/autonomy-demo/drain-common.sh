@@ -56,6 +56,48 @@ readonly DRAIN_WINDOW_START_UTC="2026-07-21T08:05:40Z"
 # Overridable for the Phase 2 Desktop scheduler surface.
 DRAIN_WORKTREE_ROOT="${DRAIN_WORKTREE_ROOT:-${DRAIN_MAIN_ROOT%/*}/.autonomy-drain-worktrees}"
 
+# --- fire-origin attestation (attest-fire-origin.sh) ------------------------
+# The Desktop task stamps fire_kind from a hardcoded --fire-kind flag, so a manual
+# "Run now" self-stamps as `scheduled`. attest-fire-origin.sh does NOT trust that
+# stamp; it reconstructs fire origin from outer-session transcript evidence. The
+# constants below are the couplings that reconstruction depends on.
+
+# Must equal the Desktop task id AND the `name` attribute in the outer transcript's
+# <scheduled-task name="..."> tag: attest matches enqueue records on this string.
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_SCHEDULED_TASK_NAME="autonomy-demo-hourly-drain"
+
+# Coupled to the Desktop task's cronExpression `0 * * * *` (fires at minute 0 of
+# each hour). Like DRAIN_GATE_CHECK_NAME, this coupling fails SILENTLY on drift: if
+# the cron slot is changed and this constant is not, every genuine fire reads as
+# off-schedule. slot_offset = enqueue_epoch % 3600 - DRAIN_CRON_SLOT_MINUTE*60
+# assumes UTC-aligned slots, which fact-2 confirms (enqueues land at :05 past the
+# UTC hour).
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_CRON_SLOT_MINUTE=0
+
+# Max seconds after the cron slot an enqueue may land and still attest as scheduled.
+# Observed genuine app dispatch delay is ~5.5min (:05:20–:05:33); the known manual
+# warm-up landed at +36min, well outside this bound.
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_FIRE_TOLERANCE_S=600
+
+# Max seconds between an outer-session enqueue and the run_id's embedded start for
+# that transcript to count as the ORIGINATING session (drain start is 30s–7min after
+# enqueue). Disambiguates the originating fire from later reconcile fires that merely
+# mention an old run_id in their own transcripts.
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_ATTEST_JOIN_WINDOW_S=900
+
+# Outer-session transcript root: $HOME/.claude/projects/<slug>/<uuid>.jsonl.
+# Overridable so the gate test can point it at synthetic fixtures.
+DRAIN_TRANSCRIPT_ROOT="${DRAIN_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
+
+# Durable materialized positive attestations. Transcripts get garbage-collected, so
+# a once-attested run must survive that: attest-fire-origin.sh --record appends here
+# and re-emits from here when the originating transcript is gone.
+DRAIN_ATTESTATIONS="${DRAIN_ATTESTATIONS:-${DRAIN_ARTIFACT_DIR}/fire-attestations.jsonl}"
+
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # drain_binding_store_path — the OTel session store filesystem path derived from
