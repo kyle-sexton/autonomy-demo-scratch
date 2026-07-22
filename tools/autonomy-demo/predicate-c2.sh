@@ -19,14 +19,11 @@ join_all="${DRAIN_ARTIFACT_DIR}/join-all.jsonl"
 mkdir -p "$DRAIN_ARTIFACT_DIR"
 : >"$join_all"
 
-# Distinct COMPLETE runs (last status per run_id), with their completion ts.
-if [[ -f "$DRAIN_RUN_STATE" ]]; then
-  complete_rows="$(jq -sc '
-    reduce .[] as $r ({}; .[$r.run_id] = ((.[$r.run_id] // {}) + $r))
-    | [.[] | select((.status // "") == "complete")]' "$DRAIN_RUN_STATE" 2>/dev/null || printf '[]')"
-else
-  complete_rows='[]'
-fi
+# Distinct COMPLETE runs (last status per run_id), with their completion ts, via the
+# shared enumerator (same reduction watch-demotion.sh uses). Fail-SOFT: a missing OR
+# unparseable run-state file degrades to zero completions (reported not-eligible below),
+# matching this reporter's read-only, no-abort posture.
+complete_rows="$(drain_complete_runs "$DRAIN_RUN_STATE" 2>/dev/null || printf '[]')"
 
 n="$(jq 'length' <<<"$complete_rows")"
 

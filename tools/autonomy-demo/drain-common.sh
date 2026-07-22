@@ -136,6 +136,11 @@ DRAIN_TRANSCRIPT_ROOT="${DRAIN_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
 # and re-emits from here when the originating transcript is gone.
 DRAIN_ATTESTATIONS="${DRAIN_ATTESTATIONS:-${DRAIN_ARTIFACT_DIR}/fire-attestations.jsonl}"
 
+# Append-only demotion-event log the post-merge watcher (watch-demotion.sh) writes when
+# a drained merge stops standing (gate regressed / human revert). Overridable for tests.
+# shellcheck disable=SC2034  # consumed by watch-demotion.sh, which sources this lib
+DRAIN_DEMOTION_EVENTS="${DRAIN_DEMOTION_EVENTS:-${DRAIN_ARTIFACT_DIR}/demotion-events.jsonl}"
+
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # drain_binding_store_path — the OTel session store filesystem path derived from
@@ -361,4 +366,104 @@ drain_merged_but_open_flags() {
     printf '%s\n' "$existing_titles" | grep -qxF "$title" && continue
     printf '%s\t%s\t%s\n' "$issue" "$pr" "$run"
   done
+}
+
+# --- shared merge-state resolution (verify-join.sh + watch-demotion.sh) ------
+# The `gh pr view` / check-run-API projections both scripts need, hosted once so the
+# resolution cannot drift between the acceptance-proof join and the post-merge net.
+
+# drain_complete_runs <run_state_file> — emit the DISTINCT complete drain runs as a
+# compact JSON array: last-status-per-run_id flattened (successive rows for a run_id are
+# object-merged, so the terminal row's pr_url/status win), then filtered to
+# status=="complete". This is the run-enumeration predicate-c2.sh and watch-demotion.sh
+# share. A MISSING file yields `[]` (rc 0: no runs yet is a legitimate empty). A PRESENT
+# but malformed file makes jq FAIL (non-zero propagates) — the helper never masks a parse
+# error into an empty result; the caller decides fail-soft (predicate: not-eligible) vs
+# fail-closed (watch-demotion: abort).
+drain_complete_runs() {
+  local f="$1"
+  [[ -f "$f" ]] || { printf '[]\n'; return 0; }
+  jq -sc '
+    reduce .[] as $r ({}; .[$r.run_id] = ((.[$r.run_id] // {}) + $r))
+    | [.[] | select((.status // "") == "complete")]' "$f"
+}
+
+# drain_pr_merge_state <pr_url> — resolve a PR's merge state from GitHub as TSV
+# "<head_sha>\t<merge_sha>\t<merged_at>", any field empty when absent (an UNMERGED PR has
+# empty merge_sha/merged_at). rc != 0 (gh transport/HTTP failure) means UNDETERMINABLE —
+# the caller must NOT read a failed lookup as "unmerged". `tr -d '\r'` strips the gh.exe /
+# jq.exe CRLF the Windows text-mode stdout appends (same boundary drain_select_candidates
+# guards), so a stray CR never rides into a downstream sha / git range.
+drain_pr_merge_state() {
+  local pr_url="$1" j
+  j="$(gh pr view "$pr_url" --json headRefOid,mergedAt,mergeCommit 2>/dev/null)" || return 3
+  jq -r '[(.headRefOid // ""), (.mergeCommit.oid // ""), (.mergedAt // "")] | @tsv' <<<"$j" \
+    | tr -d '\r'
+}
+
+# drain_gate_conclusion <owner_repo> <sha> — the deterministic-gate check-run conclusion
+# on <sha> from GitHub's check-run API (the independent gate surface the agent never
+# writes; keyed on DRAIN_GATE_CHECK_NAME == the gate workflow job name). Prints the
+# conclusion string, or EMPTY when no deterministic-gate check-run exists on <sha> — a
+# DETERMINED fact (e.g. the squash-merge commit carries none because the gate is
+# pull_request-triggered), NOT an error. rc != 0 (gh transport/HTTP failure) means
+# UNDETERMINABLE; the caller fails closed. `tr -d '\r'` guards the Windows CRLF boundary.
+#
+# `?per_page=100` (max page size) keeps the gate from falling off page 1: the check-run
+# list defaults to 30 per page, so once a commit carries >30 distinct check names the gate
+# could sit on an unfetched page and read as "" — which the verdict treats as contrary, a
+# FALSE gate-regression. The param rides in the URL query string, NOT via `-f/-F`: a raw
+# field would flip `gh api` from GET to POST (405/404). The API's default filter=latest
+# already collapses re-run attempts of a name to its most recent, so the `[0]` stays correct.
+drain_gate_conclusion() {
+  local owner_repo="$1" sha="$2" out
+  out="$(gh api "repos/${owner_repo}/commits/${sha}/check-runs?per_page=100" \
+    --jq "[.check_runs[] | select(.name == \"${DRAIN_GATE_CHECK_NAME}\")][0].conclusion // \"\"" \
+    2>/dev/null)" || return 3
+  printf '%s\n' "$out" | tr -d '\r'
+}
+
+# drain_gate_verdict <conclusion> — classify a deterministic-gate conclusion for the
+# post-merge net. Pure; no network. The GitHub check-run conclusion enum is fixed
+# (success|failure|neutral|cancelled|timed_out|action_required|stale|skipped|
+# startup_failure), plus EMPTY (no gate check-run found):
+#   success                              -> clean         (the merge carries a passing gate)
+#   "" or any non-success enum value     -> contrary      (merged without a passing gate:
+#                                           a bypass or a post-merge regression -> event)
+#   any unrecognized token               -> indeterminate (fail closed; caller aborts,
+#                                           never reads an unclassifiable value as clean)
+# EMPTY is `contrary` NOT `indeterminate` ON PURPOSE: watch-demotion only ever passes the
+# FINAL authoritative conclusion here (it resolves the merge commit first, falling back to
+# the PR head ONLY when the merge commit has no gate check-run), so an empty at this point
+# is a merged PR head with no passing gate — a determined contrary fact, not a gap.
+drain_gate_verdict() {
+  case "$1" in
+    success) printf 'clean\n' ;;
+    '' | failure | neutral | cancelled | timed_out | action_required | stale | skipped | startup_failure)
+      printf 'contrary\n' ;;
+    *) printf 'indeterminate\n' ;;
+  esac
+}
+
+# drain_demotion_already_recorded <kind> <merge_sha> <events_file> — the idempotency
+# probe. The append key is (kind, merge_sha): re-running the watcher must not duplicate a
+# row for an already-recorded event. Pure (jq over a local file); unit-tested off fixtures.
+# Return contract — the caller MUST distinguish these, because a mis-read defeats dedup:
+#   rc 0 -> already recorded (an event with this kind+merge_sha exists)
+#   rc 1 -> NOT recorded (no such event, or a missing file — nothing appended yet)
+#   rc 3 -> UNDETERMINABLE: the events file is present but jq could not parse it (rc >= 2:
+#           corrupt/truncated write). FAIL CLOSED — the caller aborts rather than treating
+#           it as "not recorded" and appending, which would permanently defeat the dedup
+#           guarantee (every re-run would re-append) after a single truncated write. This
+#           mirrors drain_complete_runs's malformed-evidence contract.
+drain_demotion_already_recorded() {
+  local kind="$1" merge_sha="$2" f="$3" rc
+  [[ -f "$f" ]] || return 1
+  jq -e -n --arg k "$kind" --arg m "$merge_sha" --slurpfile rows "$f" \
+    'any($rows[]; .kind == $k and .merge_sha == $m)' >/dev/null 2>&1
+  rc=$?
+  case "$rc" in
+    0 | 1) return "$rc" ;; # jq -e: 0 = truthy (found), 1 = false/null (not found)
+    *) return 3 ;;         # jq parse/compile/IO error (rc >= 2) -> fail closed
+  esac
 }
