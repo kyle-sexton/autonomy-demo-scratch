@@ -45,6 +45,18 @@ readonly DRAIN_GATE_CHECK_NAME="deterministic-gate"
 # shellcheck disable=SC2034  # consumed by dispatch-item.sh / drain-next.sh, which source this lib
 readonly DRAIN_BRANCH_PREFIX="autonomy/drain"
 
+# Work-item lease TTL (whole hours) drain-next.sh passes to the tracker's claim.sh.
+# STOPGAP at 1h: the intended value is 30min (runs finish in ~3.5min; at the 15-min
+# cadence a stuck lease should not block more than ~2 cycles), but the work-item-tracker
+# lease protocol is integer-hours only (claim.sh / lib/lease.sh / CONTRACT.md) and that
+# tracker is an upstream-synced vendored seam — sub-hour granularity is an upstream
+# protocol change, not a local edit. 1h = 4 cycles, tolerable because the PRIMARY
+# stuck-claim recovery is drain-next.sh's reconcile preamble (it releases a dead run's
+# lease); this TTL is only the backstop for a claim the reconcile never sees.
+# TODO(melodic-software/claude-code-plugins#1034): restore to 30min once sub-hour lease TTL lands upstream.
+# shellcheck disable=SC2034  # consumed by drain-next.sh, which sources this lib
+readonly DRAIN_LEASE_TTL_HOURS=1
+
 # The C2 accumulation window opens at the first GENUINE scheduled fire; warm-up
 # and manual rows completed before it never count toward the C2 predicate.
 # predicate-c2.sh passes this into the DuckDB query (completed_at >= start).
@@ -67,25 +79,51 @@ DRAIN_WORKTREE_ROOT="${DRAIN_WORKTREE_ROOT:-${DRAIN_MAIN_ROOT%/*}/.autonomy-drai
 # shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
 readonly DRAIN_SCHEDULED_TASK_NAME="autonomy-demo-hourly-drain"
 
-# Coupled to the Desktop task's cronExpression `0 * * * *` (fires at minute 0 of
-# each hour). Like DRAIN_GATE_CHECK_NAME, this coupling fails SILENTLY on drift: if
-# the cron slot is changed and this constant is not, every genuine fire reads as
-# off-schedule. slot_offset = enqueue_epoch % 3600 - DRAIN_CRON_SLOT_MINUTE*60
-# assumes UTC-aligned slots, which fact-2 confirms (enqueues land at :05 past the
-# UTC hour).
+# Cron-slot grid the scheduler fires on, as a repeating period anchored at a
+# minute-of-hour. Coupled to the Desktop task's cronExpression: the every-15-min
+# grid `*/15 * * * *` is period 15, anchor 0 (slots at :00/:15/:30/:45). Like
+# DRAIN_GATE_CHECK_NAME, this coupling fails SILENTLY on drift: if the scheduler's
+# grid changes and these constants do not, genuine fires read as off-schedule.
+# slot_offset = ((enqueue_epoch - anchor*60) mod period*60), i.e. seconds since the
+# most recent slot; correct for any period that divides 3600 evenly (15 does), which
+# keeps the UTC-aligned slots fact-2 confirms. The prior hourly grid was period 60,
+# anchor 0; an old-cadence hourly enqueue (+~330s past the hour) still lands within
+# tolerance of a period-15/anchor-0 slot, so the transition needs no special-casing.
 # shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
-readonly DRAIN_CRON_SLOT_MINUTE=0
+readonly DRAIN_SLOT_PERIOD_MINUTES=15
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_SLOT_ANCHOR_MINUTE=0
 
-# Max seconds after the cron slot an enqueue may land and still attest as scheduled.
-# Observed genuine app dispatch delay is ~5.5min (:05:20–:05:33); the known manual
-# warm-up landed at +36min, well outside this bound.
+# Max seconds after a slot an enqueue may land and still attest as scheduled.
+# Observed genuine app dispatch delay is +320–335s past the slot; 480s leaves ~145s of
+# headroom above that while staying well under the 900s slot period. Do NOT tighten
+# below 480s: the headroom absorbs scheduler-load drift on the +320–335s spread.
+# RESIDUAL (accepted): at the 15-min cadence a manual "Run now" attests-as-scheduled
+# whenever it lands within DRAIN_FIRE_TOLERANCE_S of ANY of the four hourly slots —
+# ~4*480/3600 ≈ 53% of the hour, versus ~600/3600 ≈ 17% under the old hourly/600s grid.
+# The growth is inherent to the higher cadence (four slots, not one), not the 600->480
+# tightening. Accepted because: (a) the threat model is an ACCIDENTAL operator kick,
+# and manual Run-now is procedurally forbidden during the C2 accumulation window;
+# (b) the originating-transcript join, not this slot check, is the primary classifier
+# (the slot check only screens a run that ALREADY joined a task-tagged enqueue); and
+# (c) a mechanical post-merge watcher (repo issue #41) is a required precondition before
+# any autonomy promotion, catching a false-scheduled completion downstream regardless.
 # shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
-readonly DRAIN_FIRE_TOLERANCE_S=600
+readonly DRAIN_FIRE_TOLERANCE_S=480
 
 # Max seconds between an outer-session enqueue and the run_id's embedded start for
 # that transcript to count as the ORIGINATING session (drain start is 30s–7min after
 # enqueue). Disambiguates the originating fire from later reconcile fires that merely
 # mention an old run_id in their own transcripts.
+# THIN MARGIN at the 15-min cadence: this window (900s) now EQUALS the slot period
+# (DRAIN_SLOT_PERIOD_MINUTES*60 = 900s), so adjacent fires lack the hourly grid's
+# comfortable spacing. Single-candidate still holds only because a run starts >=~30s
+# after its OWN enqueue, pushing the PREVIOUS slot's enqueue >900s before the run start
+# (out of window) — worst case ~915s given the observed +320–335s dispatch spread. If
+# that margin were ever violated, the run matches two in-window enqueues and reads
+# ambiguous-origin => EXCLUDED (fail-closed): a dropped genuine completion, never a
+# false attestation. Documented here (not silently relied on) per this repo's
+# silent-drift-at-constant-sites convention; revisit if the cadence tightens further.
 # shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
 readonly DRAIN_ATTEST_JOIN_WINDOW_S=900
 
@@ -266,6 +304,38 @@ drain_revert_sha() {
   rc=$?
   [[ "$rc" -eq 0 ]] || return "$rc"
   printf '%s\n' "${out%%$'\n'*}"
+}
+
+# A completion counts toward the C2 >=20-completions threshold only when its PR
+# merged at least this long before evaluation time. A freshly merged PR can still be
+# human-reverted inside the accumulation window; this delay keeps green-but-young
+# completions from inflating the count before that revert signal can land. Young or
+# unmerged completions are simply not YET mature — not an error. (Read by
+# drain_merge_is_mature below, which predicate-c2.sh calls per join row.)
+readonly DRAIN_MERGE_MATURITY_S=$((48 * 3600))
+
+# drain_merge_is_mature <merged_at_iso|""|null> <now_epoch> — prints "true" when the
+# merge timestamp is present AND at least DRAIN_MERGE_MATURITY_S seconds before
+# <now_epoch>; "false" otherwise (unmerged, unparseable, timezone-naive, or too young).
+# Pure; no network. `date -u -d` is GNU-only, matching the drain's other GNU date usage
+# (attest-fire-origin.sh, dispatch-item.sh); available in Git Bash and ubuntu CI.
+#
+# FAIL CLOSED on a timezone-naive timestamp: GNU `date -d` parses an offset-less string
+# in the machine's LOCAL zone (the -u flag only sets OUTPUT zone), which would shift the
+# merge epoch by the local UTC offset and mis-judge maturity near the 48h boundary. So
+# require an explicit UTC/offset marker (Z or ±hh:mm / ±hhmm). The gh source is always
+# Z-suffixed, so this rejects only malformed input — no production behavior change.
+drain_merge_is_mature() {
+  local merged_at="$1" now_epoch="$2" mepoch
+  [[ -n "$merged_at" && "$merged_at" != "null" ]] || { printf 'false\n'; return 0; }
+  [[ "$merged_at" =~ (Z|[+-][0-9]{2}:?[0-9]{2})$ ]] || { printf 'false\n'; return 0; }
+  mepoch="$(date -u -d "$merged_at" +%s 2>/dev/null || true)"
+  [[ -n "$mepoch" ]] || { printf 'false\n'; return 0; }
+  if (( now_epoch - mepoch >= DRAIN_MERGE_MATURITY_S )); then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
 }
 
 # drain_reconcile_title <kind> <run_id> <issue> — the identity-carrying title a

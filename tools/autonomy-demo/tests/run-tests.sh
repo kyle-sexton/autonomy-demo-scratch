@@ -116,6 +116,9 @@ assert_eq "drain_class_from_label: c2 -> C2" "$(drain_class_from_label 'work-cla
 assert_eq "drain_class_from_label: c4 -> C4" "$(drain_class_from_label 'work-class: c4')" "C4"
 assert_eq "drain_class_from_label: no token -> C2 default" "$(drain_class_from_label 'plain-label')" "C2"
 assert_eq "drain_item_url: builds the issue URL" "$(drain_item_url 'o/r' 42)" "https://github.com/o/r/issues/42"
+# Work-item lease TTL: 1h stopgap (drain-next.sh passes DRAIN_LEASE_TTL_HOURS to the
+# tracker's claim.sh, which accepts whole hours only). Guards the value against drift.
+assert_eq "lease TTL: DRAIN_LEASE_TTL_HOURS is the 1h stopgap" "$DRAIN_LEASE_TTL_HOURS" "1"
 
 # --- 6. attest-fire-origin.sh -----------------------------------------------
 # Fire-origin attestation from outer-session transcript evidence. Env points the
@@ -153,9 +156,10 @@ a1="$("$ATTEST" scheduled-20260721T100601Z-aaaaaaaa)"
 assert_eq "attest: aligned fire attested" "$(att_flag "$a1")" "true"
 assert_eq "attest: aligned reason slot-aligned" "$(att_reason "$a1")" "slot-aligned"
 
-# 2. off-schedule manual: origin transcript present, but enqueue at :36 past the hour.
-mk_transcript "$proj/c2.jsonl" "2026-07-21T10:36:27.000Z" "scheduled-20260721T104250Z-bbbbbbbb"
-a2="$("$ATTEST" scheduled-20260721T104250Z-bbbbbbbb)"
+# 2. off-schedule manual: origin transcript present, but the enqueue lands between
+# slots (:08:30 = 510s past the :00 slot, beyond the 480s tolerance).
+mk_transcript "$proj/c2.jsonl" "2026-07-21T10:08:30.000Z" "scheduled-20260721T100906Z-bbbbbbbb"
+a2="$("$ATTEST" scheduled-20260721T100906Z-bbbbbbbb)"
 assert_eq "attest: off-schedule not attested" "$(att_flag "$a2")" "false"
 assert_eq "attest: off-schedule reason" "$(att_reason "$a2")" "off-schedule"
 
@@ -213,13 +217,13 @@ assert_eq "attest: CR-carrying run_id emits CR-free run_id" \
 # later manual fire would inherit the earlier scheduled fire's slot alignment (false
 # positive) or a later legit fire would fall outside the window (false negative).
 # One file logs two fires: enqueue :05:25 spawning run A (start :06:01, aligned) and
-# enqueue :17:00 spawning run B (start :20:40, off-schedule). Run B's start is >900s
-# after the :05:25 enqueue, so ONLY its own :17:00 enqueue is in-window (a single
-# candidate), isolating the per-record resolution under test.
+# enqueue :23:30 spawning run B (start :24:06, off-schedule — 510s past the :15 slot).
+# Run B's start is >900s after the :05:25 enqueue, so ONLY its own :23:30 enqueue is
+# in-window (a single candidate), isolating the per-record resolution under test.
 runA="scheduled-20260721T100601Z-a1a1a1a1"
-runB="scheduled-20260721T102040Z-b2b2b2b2"
+runB="scheduled-20260721T102406Z-b2b2b2b2"
 { enq_line "2026-07-21T10:05:25.000Z"; fil_line "$runA"
-  enq_line "2026-07-21T10:17:00.000Z"; fil_line "$runB"; } >"$proj/multi.jsonl"
+  enq_line "2026-07-21T10:23:30.000Z"; fil_line "$runB"; } >"$proj/multi.jsonl"
 m1="$("$ATTEST" "$runA")"
 assert_eq "attest: multi-enqueue run A resolves to its own enqueue (aligned)" "$(att_flag "$m1")" "true"
 assert_eq "attest: multi-enqueue run A reason slot-aligned" "$(att_reason "$m1")" "slot-aligned"
@@ -227,9 +231,9 @@ assert_eq "attest: multi-enqueue run A enqueue_ts is :05:25 (not merely first)" 
   "$(att_ets "$m1")" "2026-07-21T10:05:25.000Z"
 m2="$("$ATTEST" "$runB")"
 assert_eq "attest: multi-enqueue run B resolves to its OWN later enqueue (not first)" \
-  "$(att_ets "$m2")" "2026-07-21T10:17:00.000Z"
+  "$(att_ets "$m2")" "2026-07-21T10:23:30.000Z"
 assert_eq "attest: multi-enqueue run B off-schedule" "$(att_reason "$m2")" "off-schedule"
-assert_eq "attest: multi-enqueue run B offset 1020" "$(att_off "$m2")" "1020"
+assert_eq "attest: multi-enqueue run B offset 510" "$(att_off "$m2")" "510"
 
 # 9c. Two in-window enqueues both matching a single run_id -> ambiguous (fail closed;
 # never pick one arbitrarily).
@@ -240,6 +244,92 @@ m3="$("$ATTEST" "$runC")"
 assert_eq "attest: two in-window enqueues for one run_id -> ambiguous" \
   "$(att_reason "$m3")" "ambiguous-origin"
 assert_eq "attest: ambiguous multi-enqueue not attested" "$(att_flag "$m3")" "false"
+
+# --- 10. slot grid (period 15 / anchor 0) -----------------------------------
+# The scheduler moved from hourly to every-15-min. attest-fire-origin now measures the
+# enqueue offset from the nearest preceding grid slot (:00/:15/:30/:45), not the top of
+# the hour, against DRAIN_FIRE_TOLERANCE_S (480s). Offset N means enqueue at slot + N.
+
+# aligned at a NON-:00 slot (proves anchor-relative offset, not hour-relative):
+# enqueue :20:25 = 325s past the :15 slot -> aligned, matching genuine dispatch delay.
+mk_transcript "$proj/g-aligned.jsonl" "2026-07-21T11:20:25.000Z" "scheduled-20260721T112101Z-9a000001"
+g1="$("$ATTEST" scheduled-20260721T112101Z-9a000001)"
+assert_eq "slot grid: aligned within tolerance of the :15 slot" "$(att_flag "$g1")" "true"
+assert_eq "slot grid: aligned offset 325 from the :15 slot (not the hour)" "$(att_off "$g1")" "325"
+
+# boundary: enqueue exactly DRAIN_FIRE_TOLERANCE_S (480s) past a slot -> still aligned
+# (the reject condition is offset > tolerance). :38:00 = 480s past the :30 slot.
+mk_transcript "$proj/g-boundary.jsonl" "2026-07-21T11:38:00.000Z" "scheduled-20260721T113836Z-9a000002"
+g2="$("$ATTEST" scheduled-20260721T113836Z-9a000002)"
+assert_eq "slot grid: enqueue exactly +480s (boundary) still attests" "$(att_flag "$g2")" "true"
+assert_eq "slot grid: boundary offset 480" "$(att_off "$g2")" "480"
+
+# misaligned: enqueue 510s past the :45 slot (:53:30) -> off-schedule (510 > 480).
+mk_transcript "$proj/g-off.jsonl" "2026-07-21T11:53:30.000Z" "scheduled-20260721T115406Z-9a000003"
+g3="$("$ATTEST" scheduled-20260721T115406Z-9a000003)"
+assert_eq "slot grid: enqueue +510s past the :45 slot is off-schedule" "$(att_flag "$g3")" "false"
+assert_eq "slot grid: off-schedule offset 510" "$(att_off "$g3")" "510"
+
+# hourly->15-min transition: an OLD-cadence hourly enqueue (+330s past the hour) still
+# aligns under period-15/anchor-0 (the hour boundary is itself a slot), so runs that
+# straddle the cadence change need no special-casing.
+mk_transcript "$proj/g-hourly.jsonl" "2026-07-21T11:05:30.000Z" "scheduled-20260721T110606Z-9a000004"
+g4="$("$ATTEST" scheduled-20260721T110606Z-9a000004)"
+assert_eq "slot grid: old hourly enqueue (+330s) still aligns under 15-min grid" "$(att_flag "$g4")" "true"
+assert_eq "slot grid: hourly-transition offset 330 from the :00 slot" "$(att_off "$g4")" "330"
+
+# adjacent-slot disambiguation at minimal margin — pins the migration's safety argument
+# that 15-min fires stay single-candidate even though the join window (900s) now EQUALS
+# the slot period (900s). Two GENUINE aligned enqueues one slot apart in ONE transcript:
+# :05:00 -> run A start :05:36 (slot :00), :20:00 -> run B start :20:36 (slot :15). Run B
+# must resolve to its OWN :20:00 enqueue (single-candidate, aligned), NOT ambiguous: the
+# :05:00 enqueue sits 900+36=936s before run B's start, just outside the 900s window.
+# This is the >=~30s enqueue->start floor the ~915s worst-case reasoning rests on; if it
+# regressed, run B would read ambiguous-origin (fail-closed EXCLUSION) and this flips.
+runX="scheduled-20260721T110536Z-c0c0c0c0"
+runY="scheduled-20260721T112036Z-d0d0d0d0"
+{ enq_line "2026-07-21T11:05:00.000Z"; fil_line "$runX"
+  enq_line "2026-07-21T11:20:00.000Z"; fil_line "$runY"; } >"$proj/adjacent.jsonl"
+adjX="$("$ATTEST" "$runX")"
+assert_eq "slot grid: adjacent-slot run A aligned single-candidate" "$(att_reason "$adjX")" "slot-aligned"
+adjY="$("$ATTEST" "$runY")"
+assert_eq "slot grid: adjacent-slot run B single-candidate/aligned (NOT ambiguous)" \
+  "$(att_reason "$adjY")" "slot-aligned"
+assert_eq "slot grid: adjacent-slot run B attested" "$(att_flag "$adjY")" "true"
+assert_eq "slot grid: adjacent-slot run B resolves to its OWN :20:00 enqueue" \
+  "$(att_ets "$adjY")" "2026-07-21T11:20:00.000Z"
+assert_eq "slot grid: adjacent-slot run B offset 300 from the :15 slot" "$(att_off "$adjY")" "300"
+
+# --- 11. merge-age maturity guard (drain_merge_is_mature) --------------------
+# The C2 >=20-completions threshold counts only completions whose PR merged >=48h
+# before evaluation time (predicate-c2.sh enriches each join row via this pure helper;
+# the SQL just counts mature rows). Pure decision, unit-tested off a fixed clock so no
+# duckdb is needed. Boundary is inclusive (>= 48h counts).
+now_ref=1000000000
+mature_iso="$(date -u -d "@$((now_ref - 72 * 3600))" +%Y-%m-%dT%H:%M:%SZ)"
+bound_iso="$(date -u -d "@$((now_ref - 48 * 3600))" +%Y-%m-%dT%H:%M:%SZ)"
+just_young_iso="$(date -u -d "@$((now_ref - 48 * 3600 + 60))" +%Y-%m-%dT%H:%M:%SZ)"
+young_iso="$(date -u -d "@$((now_ref - 3600))" +%Y-%m-%dT%H:%M:%SZ)"
+# timezone marker: a naive string (no Z / offset) fails CLOSED — GNU date would parse it
+# in local TZ and mis-judge maturity by the local offset. An explicit +hh:mm is accepted.
+naive_iso="$(date -u -d "@$((now_ref - 72 * 3600))" +%Y-%m-%dT%H:%M:%S)"
+offset_iso="$(date -u -d "@$((now_ref - 72 * 3600))" +%Y-%m-%dT%H:%M:%S+00:00)"
+assert_eq "merge maturity: 72h-old merge counts (mature)" \
+  "$(drain_merge_is_mature "$mature_iso" "$now_ref")" "true"
+assert_eq "merge maturity: exactly 48h-old merge counts (boundary, inclusive)" \
+  "$(drain_merge_is_mature "$bound_iso" "$now_ref")" "true"
+assert_eq "merge maturity: 47h59m-old merge does not count (young)" \
+  "$(drain_merge_is_mature "$just_young_iso" "$now_ref")" "false"
+assert_eq "merge maturity: 1h-old merge does not count (young)" \
+  "$(drain_merge_is_mature "$young_iso" "$now_ref")" "false"
+assert_eq "merge maturity: unmerged (empty merged_at) does not count" \
+  "$(drain_merge_is_mature "" "$now_ref")" "false"
+assert_eq "merge maturity: null merged_at does not count" \
+  "$(drain_merge_is_mature "null" "$now_ref")" "false"
+assert_eq "merge maturity: timezone-naive timestamp fails closed (not mature)" \
+  "$(drain_merge_is_mature "$naive_iso" "$now_ref")" "false"
+assert_eq "merge maturity: explicit +00:00 offset accepted (mature)" \
+  "$(drain_merge_is_mature "$offset_iso" "$now_ref")" "true"
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"

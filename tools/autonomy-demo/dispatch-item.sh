@@ -75,7 +75,7 @@ timeout_bin="$(drain_timeout_bin)"
   echo "dispatch-item.sh: no GNU coreutils 'timeout' found; refusing to run unbounded" >&2
   exit 3
 }
-inner_timeout_secs="${DRAIN_INNER_TIMEOUT_SECS:-3300}" # under the hourly cadence
+inner_timeout_secs="${DRAIN_INNER_TIMEOUT_SECS:-3300}" # safety ceiling; spans multiple 15-min slots (scheduler skips overlapped fires)
 # Mechanical spend bound on the inner invocation. The plan named a per-turn cap
 # flag that does not exist in this CLI (verified against `claude --help`);
 # `--max-budget-usd` is the enforced per-invocation bound. Default is a
