@@ -219,6 +219,14 @@ DRAIN_ATTESTATIONS="${DRAIN_ATTESTATIONS:-${DRAIN_ARTIFACT_DIR}/fire-attestation
 # shellcheck disable=SC2034  # consumed by watch-demotion.sh, which sources this lib
 DRAIN_DEMOTION_EVENTS="${DRAIN_DEMOTION_EVENTS:-${DRAIN_ARTIFACT_DIR}/demotion-events.jsonl}"
 
+# Append-only OPERATOR-maintained dispositions for demotion events (one JSON object per
+# line: kind, merge_sha, disposition_url). The watcher never writes this file — a human
+# does, after judging an event false-positive or otherwise handled — and it never deletes
+# an event row; it only stops an acknowledged event from forcing exit 1. Overridable for
+# tests.
+# shellcheck disable=SC2034  # consumed by watch-demotion.sh, which sources this lib
+DRAIN_DEMOTION_ACKS="${DRAIN_DEMOTION_ACKS:-${DRAIN_ARTIFACT_DIR}/demotion-acks.jsonl}"
+
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # drain_binding_store_path — the OTel session store filesystem path derived from
@@ -543,5 +551,39 @@ drain_demotion_already_recorded() {
   case "$rc" in
     0 | 1) return "$rc" ;; # jq -e: 0 = truthy (found), 1 = false/null (not found)
     *) return 3 ;;         # jq parse/compile/IO error (rc >= 2) -> fail closed
+  esac
+}
+
+# drain_demotion_acknowledged <kind> <merge_sha> <acks_file> — has the operator
+# dispositioned this demotion event? Keyed on the SAME (kind, merge_sha) pair as the
+# append/dedup probe above, so an ack addresses exactly one recorded event. Pure (jq over
+# a local file); unit-tested off fixtures. An acknowledgment NEVER deletes or suppresses
+# the event row — it only stops an already-judged event from counting toward the contrary
+# total that forces watch-demotion.sh to exit 1, which is what keeps ONE dispositioned
+# false positive from burying a real second event under permanent alarm fatigue.
+# Return contract — the caller MUST distinguish these:
+#   rc 0 -> acknowledged (a matching row exists and carries a non-empty disposition_url)
+#   rc 1 -> NOT acknowledged (no matching row, or a missing file — nothing acked yet);
+#           the event stays contrary and keeps failing loud, which is the default
+#   rc 3 -> UNDETERMINABLE. FAIL CLOSED (caller aborts), mirroring the events-file
+#           contract, in two cases: the acks file is present but jq cannot parse it
+#           (corrupt/truncated write), or a matching row carries no non-empty
+#           disposition_url string — a disposition without a disposition of record is not
+#           one, and silently honouring it would let an empty row mute a real event.
+drain_demotion_acknowledged() {
+  local kind="$1" merge_sha="$2" f="$3" verdict rc
+  [[ -f "$f" ]] || return 1
+  verdict="$(jq -r -n --arg k "$kind" --arg m "$merge_sha" --slurpfile rows "$f" '
+    [$rows[] | select(.kind == $k and .merge_sha == $m)] as $hits
+    | if ($hits | length) == 0 then "none"
+      elif ($hits | all((.disposition_url // "") | type == "string" and length > 0)) then "acked"
+      else "incomplete"
+      end' 2>/dev/null)"
+  rc=$?
+  [[ "$rc" -eq 0 ]] || return 3 # jq parse/compile/IO error -> fail closed
+  case "$verdict" in
+    acked) return 0 ;;
+    none) return 1 ;;
+    *) return 3 ;;
   esac
 }
