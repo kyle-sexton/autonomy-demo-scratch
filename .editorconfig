@@ -9,3 +9,11 @@ trim_trailing_whitespace = true
 [*.yml]
 indent_style = space
 indent_size = 2
+
+# Shell scripts here are hand-formatted (2-space indent, spaced `(( … ))`, `\`-continued
+# pipelines) and no shfmt setting reproduces that, so an auto-formatter run on any edit
+# rewrites whole untouched files. The gate lints shell with ShellCheck and deliberately
+# gates no formatter (.github/workflows/gate.yml), so declare that posture here: `ignore`
+# is shfmt's own EditorConfig property, which editors and other tools disregard.
+[*.sh]
+ignore = true

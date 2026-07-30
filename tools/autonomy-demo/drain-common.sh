@@ -131,6 +131,84 @@ readonly DRAIN_ATTEST_JOIN_WINDOW_S=900
 # Overridable so the gate test can point it at synthetic fixtures.
 DRAIN_TRANSCRIPT_ROOT="${DRAIN_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
 
+# drain_ts_to_epoch <iso8601> — epoch seconds via GNU date; empty on parse failure (fail
+# closed). `date -u -d` is GNU-only (matching the drain's other GNU date usage, e.g.
+# dispatch-item.sh); it is available both locally (Git Bash) and on ubuntu-latest.
+# Shared by attest-fire-origin.sh and detect-missed-fire.sh (both parse enqueue timestamps
+# off the same transcript evidence).
+drain_ts_to_epoch() { date -u -d "$1" +%s 2>/dev/null || true; }
+
+# drain_enqueue_ts_of <transcript-file> — timestamps of ALL queue-operation/enqueue records
+# whose content carries this task's <scheduled-task name="..."> tag, one per line (empty
+# output when the file has none, so it is not an originating candidate). A long-lived
+# session can log more than one fire (a scheduled fire and a later manual Run-now), so a
+# caller measuring against a SPECIFIC run_id must check every enqueue, not just the first —
+# attributing every run_id to the file's first enqueue would misattribute a later fire to
+# the earlier one (false positive) or push a later fire out of the join window (false
+# negative). detect-missed-fire.sh instead wants EVERY enqueue across every transcript
+# (no run_id join): every genuine fire — work or no-work — starts an outer session and logs
+# one of these records, which is the only scriptable fire-history signal available (Desktop's
+# own "Review history" is GUI-only; no on-disk run-history file is documented — verified
+# against code.claude.com/docs/en/desktop-scheduled-tasks, scratch#66).
+drain_enqueue_ts_of() {
+  # `tr -d '\r'` strips jq.exe's Windows CRLF at this boundary (the repo's known
+  # jq.exe CR issue); otherwise `read -r` retains the CR in each timestamp and it
+  # rides into the emitted enqueue_ts value and downstream date parsing.
+  jq -rc --arg tag "<scheduled-task name=\"${DRAIN_SCHEDULED_TASK_NAME}\"" \
+    'select(.type == "queue-operation" and .operation == "enqueue"
+            and (.content | contains($tag))) | .timestamp' \
+    "$1" 2>/dev/null | tr -d '\r'
+}
+
+# drain_slot_offset_s <epoch> — seconds elapsed since the most recent grid slot (period
+# DRAIN_SLOT_PERIOD_MINUTES, anchored at minute DRAIN_SLOT_ANCHOR_MINUTE, UTC-aligned):
+# offset = ((epoch - anchor) mod period), non-negative. Shared by attest-fire-origin.sh
+# (is THIS enqueue within tolerance of the slot it claims) and detect-missed-fire.sh (which
+# slot, if any, does THIS enqueue cover). Correct for any period dividing 3600 evenly (15
+# does) — see the DRAIN_SLOT_PERIOD_MINUTES comment above for the hourly->15-min transition
+# argument this relies on.
+drain_slot_offset_s() {
+  local epoch="$1" period_sec anchor_sec
+  period_sec=$((DRAIN_SLOT_PERIOD_MINUTES * 60))
+  anchor_sec=$((DRAIN_SLOT_ANCHOR_MINUTE * 60))
+  printf '%s\n' $(( ( (epoch - anchor_sec) % period_sec + period_sec ) % period_sec ))
+}
+
+# Earliest possible timestamp the 15-min slot grid could be live: the merge that bound
+# DRAIN_SLOT_PERIOD_MINUTES=15 (scratch#43, cd89f4a, merged 2026-07-22T17:50:27Z). This is
+# NOT the true Desktop-task schedule flip time — that is a separate operator action with no
+# on-disk record (Desktop's "Review history" is GUI-only, per the doc citation above), so the
+# actual flip may be later than this merge. Used only as a conservative FLOOR: a missed-fire
+# scan window reaching before it would retroactively judge pre-flip hourly-cadence fires
+# against the 15-min grid and manufacture ~3 false missed slots per hour (the false-positive
+# direction is NOT symmetric with the hourly->15-min attestation case above, where an old
+# hourly enqueue still happens to land on a 15-min-grid slot).
+# It bounds ONE direction only: inside [this merge, the real flip) the hourly cadence was
+# still running, so this timestamp alone does not make a window judgeable. detect-missed-fire.sh
+# therefore derives the activation boundary from evidence — the earliest covered slot off the
+# prior period-60/anchor-0 boundary at or after this floor — and leaves the interval before it
+# unjudged; see that script's ACTIVATION FLOOR note.
+# shellcheck disable=SC2034  # consumed by detect-missed-fire.sh, which sources this lib
+readonly DRAIN_SLOT_GRID_MERGED_UTC="2026-07-22T17:50:27Z"
+
+# drain_missed_fire_title <first_slot_iso> — the identity-carrying title a coalesced
+# missed-fire tracker item is keyed on, using ONLY the first missed slot of the coalesced
+# run — never the range end. An ongoing outage's range end grows on every re-invocation
+# (each additional slot past its tolerance deadline joins the same contiguous run), so
+# keying on the full range would produce a new, non-matching title each time and re-file an
+# overlapping item instead of finding the existing one already open (drain_open_reconcile_titles
+# dedup is an exact-title match). A genuinely new, later outage always starts a new first
+# slot, so identity still holds across separate incidents.
+#
+# The caller owns one further condition: the slot passed here must be the INCIDENT's first
+# missed slot, not merely the first one inside its scan window. An outage older than the
+# lookback is cut by the window's leading edge, and an anchor sliding with that edge defeats
+# this dedup exactly as a range-keyed title would — so detect-missed-fire.sh extends a range
+# abutting that edge backwards before building the title.
+drain_missed_fire_title() {
+  printf '[drain-reconcile] missed-fire: from %s (15-min slot grid)\n' "$1"
+}
+
 # Durable materialized positive attestations. Transcripts get garbage-collected, so
 # a once-attested run must survive that: attest-fire-origin.sh --record appends here
 # and re-emits from here when the originating transcript is gone.
