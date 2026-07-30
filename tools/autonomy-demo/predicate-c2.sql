@@ -32,11 +32,23 @@
 -- attests each run's origin from outer-session transcript evidence and enriches each
 -- row with fire_attested; rows that fail attestation (fire_attested = false) are
 -- excluded here, fail-closed.
+--
+-- Delegated pre-merge corrections: the completion definition is claim->implement->PR with
+-- NO help, and a run whose PR the verifying session had to fix before merge had help.
+-- predicate-c2.sh enriches each row with `corrected` from the operator-maintained
+-- run-corrections.jsonl. The exclusion is from the INPUT SET, not from the completion
+-- count alone, so EVERY aggregate below -- count, span, gate pass rate, revert count --
+-- computes over genuinely autonomous completions only: a repaired run that happened to be
+-- the earliest or latest mature completion would otherwise still establish the >=7-day
+-- span, opening the gate before seven days of autonomous evidence existed. `corrected =
+-- false` (not `IS NOT TRUE`) is deliberate: a NULL makes the predicate false and drops the
+-- row, so an unenriched row fails CLOSED.
 WITH rows AS (
   SELECT *
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'scheduled'
     AND fire_attested = true
+    AND corrected = false
     AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 )
 SELECT

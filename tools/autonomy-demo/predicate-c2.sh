@@ -123,6 +123,29 @@ while IFS= read -r line; do
 done <"$join_all" >>"${join_all}.mature"
 mv "${join_all}.mature" "$join_all"
 
+# Enrich each join row with `corrected`: true when the run's PR needed a delegated
+# pre-merge correction (a fix the verifying session made to the drain's output before
+# merge). The predicate's completion definition is claim->implement->PR with no help, and
+# a corrected run had help — so the SQL drops these from its INPUT SET, not merely from
+# the completion count: a repaired run that happened to be the earliest or latest mature
+# completion would otherwise still establish the >=7-day span, and the eligibility gate
+# would open before seven days of genuinely autonomous evidence existed.
+#
+# Unlike fire_attested (a DESIGNED per-row exclusion that warns and carries on) an
+# unreadable corrections file is evidence breakage and ABORTS: reading it as "nothing was
+# corrected" would silently restore the very miscount this filter exists to remove. A
+# MISSING file is the legitimate empty (`.artifacts/` is gitignored) and yields {}.
+# Like fire_attested and completion_mature, the column must be on EVERY row — duckdb
+# infers the schema from these rows, and a first row missing it would drop the column and
+# make the SQL's `corrected = false` filter a binder error.
+if ! corrected_map="$(drain_corrected_run_map "$DRAIN_RUN_CORRECTIONS")"; then
+  echo "predicate-c2: FATAL run-corrections.jsonl unusable ($DRAIN_RUN_CORRECTIONS) — unparseable, or a row carries no run_id; corrected-run exclusion undeterminable — aborting" >&2
+  exit 1
+fi
+jq -c --argjson m "$corrected_map" '. + {corrected: ($m[.run_id] // false)}' \
+  "$join_all" >"${join_all}.corrected"
+mv "${join_all}.corrected" "$join_all"
+
 join_path="$join_all"
 if command -v cygpath >/dev/null 2>&1; then join_path="$(cygpath -m "$join_all")"; fi
 

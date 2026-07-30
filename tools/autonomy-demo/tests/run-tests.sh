@@ -18,6 +18,9 @@
 #      grid (scratch#66), incl. the seeded-gap revalidation, coalescing, the
 #      judgeability boundary, the cadence-flip floor, window-independent dedup
 #      identity, and the evidence-proven activation floor.
+#   14. drain_corrected_run_map — the corrected-run set the C2 predicate excludes from
+#      its input set (scratch#60), incl. the fail-closed contract on a corrupt file or a
+#      row naming no run.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -554,6 +557,47 @@ enq_line "2026-07-22T19:15:20.000Z" >>"$mproj/pre-activation.jsonl"
 assert_eq "missed-fire: an off-hour fire proves activation and re-enables judgement" \
   "$(head -1 <<<"$("$DETECT" "${amb_args[@]}" 2>/dev/null)")" \
   "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-22T19:30:00Z)'"
+
+# --- 14. corrected-run exclusion (drain_corrected_run_map) -------------------
+# Runs whose PR needed a delegated pre-merge correction are not autonomous completions
+# (scratch#60). predicate-c2.sh enriches every join row with `corrected` from this map and
+# predicate-c2.sql drops those rows from its INPUT SET. The SQL half is exercised in the
+# duckdb tier (tests/predicate-c2-sql.test.sh); the map's return contract is pure and
+# belongs here, in the tier the gate actually runs.
+corr_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$corr_tmp"' EXIT
+corr_map() { # <file> — the map, or "rc=<n>" when the helper fails closed
+  local out
+  if out="$(drain_corrected_run_map "$1")"; then printf '%s' "$out"; else printf 'rc=%s' "$?"; fi
+}
+assert_eq "corrected runs: missing file yields the empty map (rc 0) — the fresh-checkout state" \
+  "$(corr_map "$corr_tmp/absent.jsonl")" "{}"
+corr_f="$corr_tmp/run-corrections.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A",
+    pr_url:"https://x/pull/24", detail:"Refs -> Closes linkage fix"}'
+  jq -cn '{corrected_at:"2026-07-23T03:00:00Z", run_id:"scheduled-B"}'; } >>"$corr_f"
+assert_eq "corrected runs: parsed rows become a run_id -> true map" \
+  "$(corr_map "$corr_f")" '{"scheduled-A":true,"scheduled-B":true}'
+assert_eq "corrected runs: an uncorrected run_id is absent from the map (enriches to false)" \
+  "$(jq -r '.["scheduled-C"] // false' <<<"$(corr_map "$corr_f")")" "false"
+# Fail-closed: an unreadable corrections file must NOT degrade to "nothing was corrected",
+# which would silently restore the miscount this filter exists to remove.
+corr_bad="$corr_tmp/malformed.jsonl"
+jq -cn '{run_id:"scheduled-A"}' >>"$corr_bad"
+jq -rn '"{\"run_id\":\"scheduled-B\" TRUNCATED"' >>"$corr_bad"
+assert_eq "corrected runs: corrupt corrections file FAILS CLOSED (rc 3, not an empty map)" \
+  "$(corr_map "$corr_bad")" "rc=3"
+# A correction row naming no run cannot be applied to any join row; dropping it silently
+# would let the run it meant to exclude count as an autonomous completion.
+corr_norun="$corr_tmp/no-run-id.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A"}'
+  jq -cn '{corrected_at:"2026-07-22T04:00:00Z", detail:"forgot the run_id"}'; } >>"$corr_norun"
+assert_eq "corrected runs: a row with NO run_id FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_norun")" "rc=3"
+corr_emptyrun="$corr_tmp/empty-run-id.jsonl"
+jq -cn '{corrected_at:"2026-07-22T04:00:00Z", run_id:""}' >>"$corr_emptyrun"
+assert_eq "corrected runs: a row with an EMPTY run_id FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_emptyrun")" "rc=3"
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"

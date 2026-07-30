@@ -26,7 +26,8 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   telemetry, return-accounting record, deterministic-gate outcome, and PR
   merge state for one item+run.
 - `predicate-c2.sh` — evaluates the C2 promotion predicate over all
-  complete drain runs (read-only reporter).
+  complete drain runs (read-only reporter). Runs listed in
+  `run-corrections.jsonl` are excluded from its input set.
 - `attest-fire-origin.sh` — fails-closed attestation of a drain run's fire
   origin (scheduled vs. manual), reconstructed from outer-session
   transcript evidence.
@@ -48,3 +49,19 @@ Evidence files under `.artifacts/`:
   by `attest-fire-origin.sh --record`.
 - `demotion-events.jsonl` — post-merge demotion events, appended by
   `watch-demotion.sh`.
+- `run-corrections.jsonl` — runs whose PR needed a delegated pre-merge
+  correction (a fix the verifying session made to the drain's output before
+  merge). Hand-maintained: whoever makes the correction appends the row, at
+  correction time; no script writes it. The C2 predicate's completion
+  definition is claim→implement→PR with no help, so `predicate-c2.sh`
+  excludes these runs from its **input set** — every aggregate (completion
+  count, window span, gate pass rate, revert count) then computes over
+  genuinely autonomous completions only. An unreadable file, or a row naming
+  no run, fails closed rather than degrading to "nothing was corrected".
+
+  ```sh
+  jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{corrected_at: $d,
+    run_id: "<run_id from the return-accounting record>",
+    pr_url: "<the corrected PR>", detail: "<what was corrected>"}' \
+    >>.artifacts/run-corrections.jsonl
+  ```
