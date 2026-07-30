@@ -48,28 +48,9 @@ emit() {
       slot_offset_s: (if $off == "" then null else ($off | tonumber) end)}'
 }
 
-# ts_to_epoch <iso8601> — epoch seconds via GNU date; empty on parse failure (fail
-# closed). `date -u -d` is GNU-only (matching the drain's other GNU date usage, e.g.
-# dispatch-item.sh); it is available both locally (Git Bash) and on ubuntu-latest.
-ts_to_epoch() { date -u -d "$1" +%s 2>/dev/null || true; }
-
-# enqueue_ts_of <transcript-file> — timestamps of ALL queue-operation/enqueue records
-# whose content carries this task's <scheduled-task name="..."> tag, one per line
-# (empty output when the file has none, so it is not an originating candidate). A
-# long-lived session can log more than one fire (a scheduled fire and a later manual
-# Run-now), so the caller MUST measure the run against each enqueue, not just the
-# first — attributing every run_id to the file's first enqueue would misattribute a
-# later fire to the earlier one (false positive) or push a later fire out of the join
-# window (false negative).
-enqueue_ts_of() {
-  # `tr -d '\r'` strips jq.exe's Windows CRLF at this boundary (the repo's known
-  # jq.exe CR issue); otherwise `read -r` retains the CR in each timestamp and it
-  # rides into the emitted enqueue_ts value and downstream date parsing.
-  jq -rc --arg tag "<scheduled-task name=\"${DRAIN_SCHEDULED_TASK_NAME}\"" \
-    'select(.type == "queue-operation" and .operation == "enqueue"
-            and (.content | contains($tag))) | .timestamp' \
-    "$1" 2>/dev/null | tr -d '\r'
-}
+# ts_to_epoch / enqueue_ts_of moved to drain-common.sh as drain_ts_to_epoch /
+# drain_enqueue_ts_of (detect-missed-fire.sh needs the same primitives to mine every
+# task-tagged enqueue across all transcripts, not just those matching one run_id).
 
 for run_id in "$@"; do
   # Defensive CR strip: a caller extracting run_ids via jq.exe under Windows text-mode
@@ -99,7 +80,7 @@ for run_id in "$@"; do
   ts="${run_id#scheduled-}"
   ts="${ts%-*}"
   run_iso="${ts:0:4}-${ts:4:2}-${ts:6:2}T${ts:9:2}:${ts:11:2}:${ts:13:2}Z"
-  run_start="$(ts_to_epoch "$run_iso")"
+  run_start="$(drain_ts_to_epoch "$run_iso")"
   if [[ -z "$run_start" ]]; then
     emit "$run_id" 0 "bad-run-timestamp" "" "" ""
     continue
@@ -119,7 +100,7 @@ for run_id in "$@"; do
     [[ -n "$f" ]] || continue
     while IFS= read -r ets; do
       [[ -n "$ets" ]] || continue
-      eepoch="$(ts_to_epoch "$ets")"
+      eepoch="$(drain_ts_to_epoch "$ets")"
       [[ -n "$eepoch" ]] || continue
       delta=$((run_start - eepoch))
       if (( delta >= 0 && delta <= DRAIN_ATTEST_JOIN_WINDOW_S )); then
@@ -128,7 +109,7 @@ for run_id in "$@"; do
         origin_ts="$ets"
         origin_epoch="$eepoch"
       fi
-    done < <(enqueue_ts_of "$f")
+    done < <(drain_enqueue_ts_of "$f")
   done < <(grep -lF -- "$run_id" "$DRAIN_TRANSCRIPT_ROOT"/*/*.jsonl 2>/dev/null || true)
 
   if (( origin_count == 0 )); then
@@ -143,9 +124,7 @@ for run_id in "$@"; do
   # 6. Cron-slot alignment: seconds elapsed since the most recent slot on the grid
   # (period DRAIN_SLOT_PERIOD_MINUTES, anchored at minute DRAIN_SLOT_ANCHOR_MINUTE,
   # UTC-aligned). offset = ((epoch - anchor) mod period), non-negative.
-  period_sec=$((DRAIN_SLOT_PERIOD_MINUTES * 60))
-  anchor_sec=$((DRAIN_SLOT_ANCHOR_MINUTE * 60))
-  offset=$(( ( (origin_epoch - anchor_sec) % period_sec + period_sec ) % period_sec ))
+  offset="$(drain_slot_offset_s "$origin_epoch")"
   if (( offset > DRAIN_FIRE_TOLERANCE_S )); then
     emit "$run_id" 0 "off-schedule" "$origin_ts" "$origin_file" "$offset"
     continue

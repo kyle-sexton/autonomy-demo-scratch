@@ -16,9 +16,9 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
 
 `tools/autonomy-demo/` entrypoints:
 
-- `drain-next.sh` — hourly drain entrypoint; claims the first eligible
-  C2-labelled open item via the tracker seam and dispatches it (`--dry-run`
-  for a read-only preview).
+- `drain-next.sh` — scheduled drain entrypoint (15-min slot grid); claims the
+  first eligible C2-labelled open item via the tracker seam and dispatches it
+  (`--dry-run` for a read-only preview).
 - `dispatch-item.sh` — runs one agent session on an already-leased item in
   an isolated worktree, under a dollar/time budget; opens a PR and stops
   (never merges or closes).
@@ -34,6 +34,12 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   backup folder and prunes to the last N snapshots.
 - `watch-demotion.sh` — post-merge demotion net: gate re-check on drained
   merges plus revert scan, appends `demotion-events.jsonl`, fail-closed.
+- `detect-missed-fire.sh` — deterministic, zero-token missed-fire detector
+  (Phase 2 item 4, re-specced against the bound 15-min slot grid per scratch#66;
+  wiring into a live scheduled task stays Phase 4): scans outer-session
+  transcript enqueue evidence for grid slots with no fire, and would file a
+  human-gated tracker item per coalesced gap (`--dry-run` for a read-only,
+  network-free preview).
 
 Evidence files under `.artifacts/`:
 

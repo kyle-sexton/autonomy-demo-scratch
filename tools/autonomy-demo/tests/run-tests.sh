@@ -14,6 +14,9 @@
 #   4. drain_merged_but_open_flags — the double-drain guard's pure decision:
 #      flag / don't-flag / dedup.
 #   5. pure drain-common.sh helpers (drain_class_from_label, drain_item_url).
+#   13. detect-missed-fire.sh — missed-fire detection against the bound 15-min slot
+#      grid (scratch#66), incl. the seeded-gap revalidation, coalescing, the
+#      judgeability boundary, and the cadence-flip floor.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -431,6 +434,78 @@ if drain_demotion_already_recorded "gate-regression" "cafed00d" "$events_f"; the
 else
   pass "demotion re-run: a new merge_sha is not yet recorded"
 fi
+
+# --- 13. detect-missed-fire.sh -----------------------------------------------
+# Missed-fire detector (scratch#66): re-specced against the BOUND 15-min slot grid
+# (DRAIN_SLOT_PERIOD_MINUTES/DRAIN_SLOT_ANCHOR_MINUTE), not the superseded hourly
+# cadence the original Phase 2 spec named. Reuses the same task-tagged-enqueue
+# evidence attest-fire-origin.sh mines (drain_enqueue_ts_of / drain_slot_offset_s,
+# shared via drain-common.sh): every genuine fire — work or no-work — logs one of
+# these records, unlike drain-runs.jsonl which only gains a row when a fire finds
+# work to claim. `--dry-run` is fully network-free (reads only local transcripts),
+# so it is exercised here as a subprocess like attest-fire-origin.sh; the live
+# filing path (gh dedup + create-item.sh) is untested here for the same reason
+# drain_file_reconcile_item's own gh calls are untested elsewhere in this
+# network-free tier.
+DETECT="$TEST_DIR/../detect-missed-fire.sh"
+missed_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp"' EXIT
+export DRAIN_TRANSCRIPT_ROOT="$missed_tmp/projects"
+mproj="$DRAIN_TRANSCRIPT_ROOT/demo-slug"
+mkdir -p "$mproj"
+
+# 13a. Seeded gap: two adjacent missed slots (:30, :45) between covered slots (:00,
+# :15, next-hour :00, :15) — the literal Phase-2 sanity check ("missed-fire detector
+# dry-run: seeded gap produces the tracker item") revalidated against the 15-min grid.
+{ enq_line "2026-07-23T00:00:20.000Z"; enq_line "2026-07-23T00:15:20.000Z"
+  enq_line "2026-07-23T01:00:20.000Z"; enq_line "2026-07-23T01:15:20.000Z"
+  enq_line "2026-07-23T01:30:20.000Z"; enq_line "2026-07-23T01:45:20.000Z"; } >"$mproj/gap.jsonl"
+gap_out="$("$DETECT" --dry-run --since 2026-07-23T00:00:00Z --until 2026-07-23T02:00:00Z)"
+assert_eq "missed-fire: seeded 2-slot gap dry-run produces the tracker item (scratch#66 revalidation)" \
+  "$(printf '%s\n' "$gap_out" | head -1)" \
+  "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-23T00:30:00Z)'"
+assert_eq "missed-fire: seeded-gap body names the coalesced range and slot count" \
+  "$(printf '%s\n' "$gap_out" | grep -c '2026-07-23T00:30:00Z..2026-07-23T00:45:00Z (2 slot(s))')" \
+  "1"
+rm -f "$mproj/gap.jsonl"
+
+# 13b. Full coverage: an enqueue within tolerance of every slot in the window ->
+# no-gaps, nothing filed.
+{ enq_line "2026-07-23T00:00:20.000Z"; enq_line "2026-07-23T00:15:20.000Z"
+  enq_line "2026-07-23T00:30:20.000Z"; enq_line "2026-07-23T00:45:20.000Z"; } >"$mproj/full.jsonl"
+assert_eq "missed-fire: full coverage reports no-gaps" \
+  "$("$DETECT" --dry-run --since 2026-07-23T00:00:00Z --until 2026-07-23T01:00:00Z)" "no-gaps"
+rm -f "$mproj/full.jsonl"
+
+# 13c. Judgeability boundary (mirrors attest-fire-origin.sh's own offset==tolerance-
+# is-still-aligned contract): a slot whose deadline (slot + DRAIN_FIRE_TOLERANCE_S)
+# exactly equals --until is NOT yet judgeable (not missed, nothing to judge it against
+# yet); one second later the same uncovered slot IS judgeable and missed. No transcripts
+# exist at this point (both fixtures above were removed), so any judged slot is missed.
+assert_eq "missed-fire: slot exactly AT its tolerance deadline is not yet judgeable" \
+  "$("$DETECT" --dry-run --since 2026-07-23T03:00:00Z --until 2026-07-23T03:08:00Z)" "no-gaps"
+boundary_out="$("$DETECT" --dry-run --since 2026-07-23T03:00:00Z --until 2026-07-23T03:08:01Z)"
+assert_eq "missed-fire: one second past the deadline, the same uncovered slot is missed" \
+  "$(printf '%s\n' "$boundary_out" | head -1)" \
+  "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-23T03:00:00Z)'"
+
+# 13d. Cadence-flip floor: a --since before DRAIN_SLOT_GRID_MERGED_UTC is clamped, not
+# judged — asserts the pre-flip hourly-cadence window manufactures no false missed slots.
+floor_stdout="$("$DETECT" --dry-run --since 2026-07-22T00:00:00Z --until 2026-07-22T01:00:00Z 2>/dev/null)"
+floor_stderr="$("$DETECT" --dry-run --since 2026-07-22T00:00:00Z --until 2026-07-22T01:00:00Z 2>&1 >/dev/null)"
+assert_eq "missed-fire: pre-flip window clamps to the floor (no fabricated slots)" \
+  "$floor_stdout" "detect-missed-fire.sh: nothing to scan (since >= until after clamping)"
+assert_eq "missed-fire: pre-flip --since is clamped to the grid floor with a WARN" \
+  "$(printf '%s\n' "$floor_stderr" | grep -c 'clamping')" "1"
+
+# 13e. drain_missed_fire_title — pure, network-free identity builder: keyed on the
+# first slot only. The range end is deliberately NOT part of the title (see the
+# dedup-safety comment at its definition in drain-common.sh) — an ongoing outage's
+# range end grows on every re-invocation, so a range-keyed title would never match
+# the item already open and would re-file an overlapping duplicate each time.
+assert_eq "drain_missed_fire_title: keyed on the first slot, range-end-free" \
+  "$(drain_missed_fire_title "2026-07-23T00:30:00Z")" \
+  "[drain-reconcile] missed-fire: from 2026-07-23T00:30:00Z (15-min slot grid)"
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"
