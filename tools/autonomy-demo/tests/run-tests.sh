@@ -16,7 +16,8 @@
 #   5. pure drain-common.sh helpers (drain_class_from_label, drain_item_url).
 #   13. detect-missed-fire.sh — missed-fire detection against the bound 15-min slot
 #      grid (scratch#66), incl. the seeded-gap revalidation, coalescing, the
-#      judgeability boundary, and the cadence-flip floor.
+#      judgeability boundary, the cadence-flip floor, window-independent dedup
+#      identity, and the evidence-proven activation floor.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -480,8 +481,12 @@ rm -f "$mproj/full.jsonl"
 # 13c. Judgeability boundary (mirrors attest-fire-origin.sh's own offset==tolerance-
 # is-still-aligned contract): a slot whose deadline (slot + DRAIN_FIRE_TOLERANCE_S)
 # exactly equals --until is NOT yet judgeable (not missed, nothing to judge it against
-# yet); one second later the same uncovered slot IS judgeable and missed. No transcripts
-# exist at this point (both fixtures above were removed), so any judged slot is missed.
+# yet); one second later the same uncovered slot IS judgeable and missed. The only
+# transcript kept here is activation proof (an off-hour :02:45 slot, immediately before the
+# windows under test): without it the grid's activation is unproven and every uncovered slot
+# is unjudgeable rather than missed (13g), which would mask the boundary this case pins.
+# Adjacent placement also leaves the leading-range extension (13f) nothing to add.
+enq_line "2026-07-23T02:45:20.000Z" >"$mproj/activation-proof.jsonl"
 assert_eq "missed-fire: slot exactly AT its tolerance deadline is not yet judgeable" \
   "$("$DETECT" --dry-run --since 2026-07-23T03:00:00Z --until 2026-07-23T03:08:00Z)" "no-gaps"
 boundary_out="$("$DETECT" --dry-run --since 2026-07-23T03:00:00Z --until 2026-07-23T03:08:01Z)"
@@ -506,6 +511,49 @@ assert_eq "missed-fire: pre-flip --since is clamped to the grid floor with a WAR
 assert_eq "drain_missed_fire_title: keyed on the first slot, range-end-free" \
   "$(drain_missed_fire_title "2026-07-23T00:30:00Z")" \
   "[drain-reconcile] missed-fire: from 2026-07-23T00:30:00Z (15-min slot grid)"
+
+# 13f. Dedup identity is window-independent. An outage older than the lookback is cut by the
+# scan window's LEADING edge, so the anchor used to slide forward one slot per invocation and
+# never match the item already open — the exact-title dedup then files a fresh overlapping
+# item every 15 minutes for one continuous incident. The same incident seen through two
+# windows advanced by a slot must yield the IDENTICAL title, anchored on the incident's own
+# first missed slot (:00:30, right after the last covered slot) rather than the window edge.
+rm -f "$mproj"/*.jsonl
+{ enq_line "2026-07-23T00:00:20.000Z"; enq_line "2026-07-23T00:15:20.000Z"; } >"$mproj/ongoing.jsonl"
+# Capture in full, THEN take the first line: piping the detector straight into `head -1`
+# closes the pipe early and the SIGPIPE trips this suite's `pipefail`.
+slide_a="$(head -1 <<<"$("$DETECT" --dry-run --since 2026-07-24T00:00:00Z --until 2026-07-25T00:00:00Z 2>/dev/null)")"
+slide_b="$(head -1 <<<"$("$DETECT" --dry-run --since 2026-07-24T00:15:00Z --until 2026-07-25T00:15:00Z 2>/dev/null)")"
+assert_eq "missed-fire: dedup title identical across a window advanced one slot" "$slide_b" "$slide_a"
+assert_eq "missed-fire: anchor is the incident's own first missed slot, not the window edge" \
+  "$slide_a" \
+  "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-23T00:30:00Z)'"
+
+# 13g. Activation floor: the merge that BOUND the 15-min grid is not the moment the operator
+# flipped the Desktop schedule, and that interval still ran the hourly cadence — so its
+# :15/:30/:45 slots have no enqueue and are UNJUDGEABLE, not missed. Hourly-only evidence
+# after DRAIN_SLOT_GRID_MERGED_UTC must therefore fabricate nothing (it previously produced
+# one false range per hour) and must say the window was ambiguous rather than clean.
+rm -f "$mproj"/*.jsonl
+{ enq_line "2026-07-22T18:00:20.000Z"; enq_line "2026-07-22T19:00:20.000Z"
+  enq_line "2026-07-22T20:00:20.000Z"; enq_line "2026-07-22T21:00:20.000Z"
+  enq_line "2026-07-22T22:00:20.000Z"; } >"$mproj/pre-activation.jsonl"
+amb_args=(--dry-run --since 2026-07-22T18:00:00Z --until 2026-07-22T23:00:00Z)
+amb_out="$("$DETECT" "${amb_args[@]}" 2>/dev/null)"
+assert_eq "missed-fire: pre-activation hourly interval fabricates no missed ranges" \
+  "$(printf '%s\n' "$amb_out" | grep -c '^missed-fire(dry)')" "0"
+assert_eq "missed-fire: activation-unproven window reports cadence-ambiguous, not no-gaps" \
+  "$amb_out" \
+  "cadence-ambiguous: 15 slot(s) not judgeable (15-min grid activation unproven); no missed fire among the slots that were"
+assert_eq "missed-fire: unjudged slots are reported loudly on stderr" \
+  "$("$DETECT" "${amb_args[@]}" 2>&1 >/dev/null | grep -c 'left UNJUDGED')" "1"
+# One off-hour fire PROVES the grid is live (the prior period-60 cadence could not produce a
+# :15 slot), so from that slot on the same detector judges normally again: the :15 enqueue
+# covers 19:15, and 19:30 onward become genuinely missed while 18:15–18:45 stay unjudgeable.
+enq_line "2026-07-22T19:15:20.000Z" >>"$mproj/pre-activation.jsonl"
+assert_eq "missed-fire: an off-hour fire proves activation and re-enables judgement" \
+  "$(head -1 <<<"$("$DETECT" "${amb_args[@]}" 2>/dev/null)")" \
+  "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-22T19:30:00Z)'"
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"

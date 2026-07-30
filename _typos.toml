@@ -1,0 +1,14 @@
+# Vocabulary this repo uses deliberately, which `typos`' built-in dictionary would otherwise
+# rewrite. Without it an editor/agent spell-autocorrect silently changes prose in whichever
+# file it happens to touch, fragmenting a spelling the rest of the tree already agrees on.
+[default.extend-words]
+# The tree's established spelling (predicate-c2.sh, watch-demotion.sh, drain-common.sh,
+# tools/work-item-tracker/migrations/README.md); "unparsable" would appear in edited files only.
+unparseable = "unparseable"
+# Hyphenated prefix in prose ("mis-judge", "mis-read"), not the word "miss".
+mis = "mis"
+
+[default.extend-identifiers]
+# tests/run-tests.sh's failure-reporting helper, deliberately not named `failed` so it does
+# not read as a state variable. Autocorrecting the call sites would break the suite.
+faild = "faild"

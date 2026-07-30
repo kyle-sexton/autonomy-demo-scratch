@@ -183,6 +183,11 @@ drain_slot_offset_s() {
 # against the 15-min grid and manufacture ~3 false missed slots per hour (the false-positive
 # direction is NOT symmetric with the hourly->15-min attestation case above, where an old
 # hourly enqueue still happens to land on a 15-min-grid slot).
+# It bounds ONE direction only: inside [this merge, the real flip) the hourly cadence was
+# still running, so this timestamp alone does not make a window judgeable. detect-missed-fire.sh
+# therefore derives the activation boundary from evidence — the earliest covered slot off the
+# prior period-60/anchor-0 boundary at or after this floor — and leaves the interval before it
+# unjudged; see that script's ACTIVATION FLOOR note.
 # shellcheck disable=SC2034  # consumed by detect-missed-fire.sh, which sources this lib
 readonly DRAIN_SLOT_GRID_MERGED_UTC="2026-07-22T17:50:27Z"
 
@@ -194,6 +199,12 @@ readonly DRAIN_SLOT_GRID_MERGED_UTC="2026-07-22T17:50:27Z"
 # overlapping item instead of finding the existing one already open (drain_open_reconcile_titles
 # dedup is an exact-title match). A genuinely new, later outage always starts a new first
 # slot, so identity still holds across separate incidents.
+#
+# The caller owns one further condition: the slot passed here must be the INCIDENT's first
+# missed slot, not merely the first one inside its scan window. An outage older than the
+# lookback is cut by the window's leading edge, and an anchor sliding with that edge defeats
+# this dedup exactly as a range-keyed title would — so detect-missed-fire.sh extends a range
+# abutting that edge backwards before building the title.
 drain_missed_fire_title() {
   printf '[drain-reconcile] missed-fire: from %s (15-min slot grid)\n' "$1"
 }

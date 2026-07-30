@@ -35,7 +35,18 @@
 # Dedup identity is the FIRST missed slot of the coalesced run only (drain_missed_fire_title),
 # never the range end — the range end grows on every re-invocation of an ongoing outage,
 # so keying on the full range would file an overlapping duplicate each time instead of
-# matching the item already open. RESIDUAL: dedup checks only OPEN tracker items (this
+# matching the item already open.
+#
+# That first slot names the INCIDENT only while the outage starts inside the scan window.
+# An outage older than the lookback is truncated by the window's LEADING edge, so its anchor
+# would slide forward a slot per invocation and miss the open item just as surely. A leading
+# range abutting the window's first grid slot was therefore cut by that edge rather than by a
+# covered slot, and is extended backwards through consecutively-missed slots to the first
+# covered slot before the title is built; coverage is mined from every transcript, unbounded
+# by the window, so those earlier slots are judged against the same evidence. Interior ranges
+# already sit between covered slots on both sides and are left alone.
+#
+# RESIDUAL: dedup checks only OPEN tracker items (this
 # repo's standing reconcile convention); if a filed item is closed while its gap is still
 # inside the lookback window, the next run re-files it. Accepted for the same reason the
 # other reconcile kinds accept it — a human closes the item once resolved, and a detector
@@ -52,6 +63,19 @@
 # slots per hour (see the constant's comment in drain-common.sh for why this direction is
 # not symmetric with attest-fire-origin.sh's hourly->15-min transition case). --since is
 # clamped to that floor with a WARN, never silently judged past it.
+#
+# ACTIVATION FLOOR: that merge is only the earliest the grid COULD have been live. Flipping
+# the Desktop task is a separate operator action with no on-disk record, so the interval
+# between the merge and the real flip still ran the hourly cadence, and judging it against
+# the 15-min grid fabricates the same ~3 false slots per hour. The flip is therefore proven
+# from evidence rather than assumed: the prior grid was period 60 / anchor 0, so a covered
+# slot at :15/:30/:45 is a fire the hourly cadence could not have produced and proves the
+# 15-min grid was already live. The earliest such slot at or after the merge floor is the
+# activation boundary. An UNCOVERED slot before it is UNJUDGEABLE — there a missed fire and
+# a not-yet-flipped schedule are indistinguishable — and is skipped rather than reported,
+# while a covered slot needs no cadence proof and is unaffected. With no off-hour slot
+# anywhere in the scanned transcripts, activation is unproven entirely and every uncovered
+# slot is unjudgeable: fail closed and say so, never report fabricated gaps.
 #
 # Usage: detect-missed-fire.sh [--dry-run] [--since <iso8601>] [--until <iso8601>]
 #   --since default: 24h before --until. Not a full historical audit — bounded by both
@@ -121,8 +145,17 @@ fi
 
 # --- 1. mine every task-tagged enqueue's covered slot, across all outer transcripts ---
 period_sec=$((DRAIN_SLOT_PERIOD_MINUTES * 60))
-covered_file="$(mktemp)"
-trap 'rm -f "$covered_file"' EXIT
+anchor_sec=$((DRAIN_SLOT_ANCHOR_MINUTE * 60))
+# The cadence this grid replaced (drain-common.sh: period 60, anchor 0). A covered slot off
+# THIS boundary could not have come from it, which is the activation proof step 1b mines.
+prior_period_sec=3600
+# Covered slots are an associative array, not a temp file: membership is tested once per grid
+# slot in the window AND once per slot the leading-range extension walks back over, so one
+# `grep` subprocess per test dominated the runtime over a multi-day range.
+declare -A covered=()
+missed_file="$(mktemp)"
+ordered_file="$(mktemp)"
+trap 'rm -f "$missed_file" "$ordered_file"' EXIT
 for f in "$DRAIN_TRANSCRIPT_ROOT"/*/*.jsonl; do
   [[ -f "$f" ]] || continue
   while IFS= read -r ets; do
@@ -131,13 +164,23 @@ for f in "$DRAIN_TRANSCRIPT_ROOT"/*/*.jsonl; do
     [[ -n "$eepoch" ]] || continue
     off="$(drain_slot_offset_s "$eepoch")"
     if (( off <= DRAIN_FIRE_TOLERANCE_S )); then
-      echo $((eepoch - off)) >>"$covered_file"
+      covered[$((eepoch - off))]=1
     fi
   done < <(drain_enqueue_ts_of "$f")
 done
 
+# --- 1b. prove when the 15-min grid actually went live (ACTIVATION FLOOR above) -------
+# Empty result = activation unproven, which leaves every uncovered slot unjudgeable.
+activation_epoch=""
+for cslot in "${!covered[@]}"; do
+  (( cslot >= floor_epoch )) || continue
+  (( (cslot - anchor_sec) % prior_period_sec != 0 )) || continue
+  if [[ -z "$activation_epoch" ]] || (( cslot < activation_epoch )); then
+    activation_epoch="$cslot"
+  fi
+done
+
 # --- 2. walk the grid over [since, until), skipping any slot not yet judgeable --------
-anchor_sec=$((DRAIN_SLOT_ANCHOR_MINUTE * 60))
 rem=$(( (since_epoch - anchor_sec) % period_sec ))
 (( rem < 0 )) && rem=$((rem + period_sec))
 if (( rem == 0 )); then
@@ -145,24 +188,52 @@ if (( rem == 0 )); then
 else
   slot=$((since_epoch + period_sec - rem))
 fi
+first_slot=$slot
 
-missed_file="$(mktemp)"
-trap 'rm -f "$covered_file" "$missed_file"' EXIT
+unjudgeable_count=0
 while (( slot < until_epoch )); do
   if (( slot + DRAIN_FIRE_TOLERANCE_S < until_epoch )); then
-    if [[ -f "$covered_file" ]] && grep -qxF "$slot" "$covered_file"; then
+    if [[ -n "${covered[$slot]:-}" ]]; then
       : # covered
-    else
+    elif [[ -n "$activation_epoch" ]] && (( slot >= activation_epoch )); then
       echo "$slot" >>"$missed_file"
+    else
+      unjudgeable_count=$((unjudgeable_count + 1))
     fi
   fi
   slot=$((slot + period_sec))
 done
 
+if (( unjudgeable_count > 0 )); then
+  if [[ -n "$activation_epoch" ]]; then
+    unjudgeable_why="they precede the grid's proven activation ($(date -u -d "@$activation_epoch" +%Y-%m-%dT%H:%M:%SZ))"
+  else
+    unjudgeable_why="no off-hour enqueue exists in any scanned transcript, so activation is unproven entirely"
+  fi
+  echo "detect-missed-fire.sh: WARN $unjudgeable_count uncovered slot(s) left UNJUDGED — $unjudgeable_why; there a missed fire is indistinguishable from the pre-flip hourly cadence (see the activation-floor note in this script's header)" >&2
+fi
+
 if [[ ! -s "$missed_file" ]]; then
-  echo "no-gaps"
+  if (( unjudgeable_count > 0 )); then
+    echo "cadence-ambiguous: $unjudgeable_count slot(s) not judgeable (15-min grid activation unproven); no missed fire among the slots that were"
+  else
+    echo "no-gaps"
+  fi
   exit 0
 fi
+
+# --- 2b. extend a window-truncated leading range to the incident's own first slot -----
+# See the dedup-identity note in this script's header. activation_epoch is necessarily set
+# here: a slot is only recorded missed once activation is proven.
+first_missed="$(head -n 1 "$missed_file")"
+if (( first_missed == first_slot )); then
+  probe=$((first_missed - period_sec))
+  while (( probe >= activation_epoch )) && [[ -z "${covered[$probe]:-}" ]]; do
+    echo "$probe" >>"$missed_file"
+    probe=$((probe - period_sec))
+  done
+fi
+sort -n "$missed_file" >"$ordered_file"
 
 # --- 3. coalesce contiguous missed slots (period_sec apart) into ranges --------------
 range_first="" range_last="" range_count=0
@@ -212,5 +283,5 @@ while IFS= read -r s; do
     range_last="$s"
     range_count=1
   fi
-done <"$missed_file"
+done <"$ordered_file"
 flush_range
