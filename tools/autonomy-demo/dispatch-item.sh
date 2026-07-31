@@ -20,7 +20,7 @@
 #
 # Usage:
 #   dispatch-item.sh <issue-number> \
-#     --work-class <C1..C5> --run-id <run-id> [--fire-kind manual|scheduled]
+#     --work-class <C1..C5> --run-id <run-id> [--fire-kind manual|scheduled|labeled]
 set -euo pipefail
 
 # shellcheck source-path=SCRIPTDIR
@@ -29,7 +29,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/drain-common.sh"
 
 issue="${1:-}"
 [[ -n "$issue" ]] || {
-  echo "usage: dispatch-item.sh <issue-number> --work-class <C1..C5> --run-id <id> [--fire-kind manual|scheduled]" >&2
+  echo "usage: dispatch-item.sh <issue-number> --work-class <C1..C5> --run-id <id> [--fire-kind manual|scheduled|labeled]" >&2
   exit 2
 }
 shift

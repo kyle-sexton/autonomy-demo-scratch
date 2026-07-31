@@ -19,7 +19,12 @@
       "label-kick": {
         "class": "tracker-vcs-event",
         "transport": "push",
-        "execution_surface": "demo-local-session"
+        "relay_workflow": ".github/workflows/label-kick.yml",
+        "dispatch_hop": "poll",
+        "dispatch_hop_surface": "hourly-drain",
+        "execution_surface": "demo-local-session",
+        "status": "relay-wired-dispatch-deferred",
+        "note": "Push reaches the relay workflow only: no push path to the local execution surface exists on any current platform surface (verified 2026-07-30 against the desktop-scheduled-tasks and routines docs; routines' GitHub triggers cover pull_request/release events only and execute cloud-side). Dispatch rides the temporal grid until a push-capable hop lands; decisions, rejected alternatives, and deferral triggers: scratch#42."
       },
       "hourly-drain": {
         "class": "temporal",
@@ -28,7 +33,7 @@
         "execution_surface": "demo-local-session"
       }
     },
-    "drain": { "cadence": "hourly", "execution_surface": "demo-local-session" }
+    "drain": { "cadence": "every-15-min", "execution_surface": "demo-local-session" }
   },
   "routines": {
     "enabled": {

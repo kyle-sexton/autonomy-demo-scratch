@@ -127,6 +127,112 @@ readonly DRAIN_FIRE_TOLERANCE_S=480
 # shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
 readonly DRAIN_ATTEST_JOIN_WINDOW_S=900
 
+# --- label-kick relay (scratch#42) -------------------------------------------
+# The label-kick trigger surface has NO push path to the local execution surface today
+# (verified 2026-07-30: Desktop local tasks are schedule+manual only; remote routines'
+# GitHub triggers cover pull_request/release events only and execute cloud-side, off the
+# evidence spine). What IS wired is the push-receiving RELAY: an `on: issues: [labeled]`
+# workflow whose run record is the platform-attested kick context (run id, workflow path,
+# event kind, run-name-encoded issue + label, timestamps). A future push-capable dispatch
+# hop passes that run id to drain-next.sh as --kick-ref; attest-fire-origin.sh verifies
+# the claim against GitHub's own record of that run. Decisions + deferral triggers:
+# scratch#42.
+
+# Repo-relative path of the relay workflow file. Coupled to the workflow's location on
+# the default branch AND to the `path` field GitHub stamps on its run records: the
+# labeled-fire attestor equality-checks that field against this constant, so moving or
+# renaming the workflow without updating this silently un-attests every labeled fire
+# (the same silent-drift class as DRAIN_GATE_CHECK_NAME).
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_LABEL_KICK_WORKFLOW=".github/workflows/label-kick.yml"
+
+# Max seconds between the relay run's creation (the platform's receipt of the label
+# event) and the labeled drain run's start. Sized to match DRAIN_ATTEST_JOIN_WINDOW_S:
+# the push hop's event->session latency is expected in the seconds-to-minutes range, so
+# 900s is generous headroom without letting a stale kick attest a much later fire.
+# shellcheck disable=SC2034  # consumed by attest-fire-origin.sh, which sources this lib
+readonly DRAIN_LABELED_JOIN_WINDOW_S=900
+
+# drain_parse_label_kick_title <display_title> — extract "<issue>\t<label>" from a relay
+# run's run-name, or print nothing when the title does not match the relay's run-name
+# convention (a non-relay run, or a future run-name drift — fail closed either way).
+# Coupled to the `run-name:` expression in the relay workflow; change them together.
+drain_parse_label_kick_title() {
+  [[ "$1" =~ ^label-kick\ issue\ \#([0-9]+)\ label\ \[(.+)\]$ ]] || return 0
+  printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+# drain_labeled_kick_attest <run_start_epoch> <label> <kick_json> <rival_claimants> — PURE
+# verification of a claimed kick against the platform's run record for it (all inputs
+# supplied; the gh fetch lives in attest-fire-origin.sh). <kick_json> is the workflow-run
+# object projection {path, event, display_title, created_at}. <rival_claimants> is the
+# newline-separated set of OTHER drain runs that recorded the SAME kick_ref (empty when the
+# claim is exclusive). Prints one line:
+#   attested\t<created_at_iso>  — the record is the relay workflow, an issues event, its
+#                                 run-name-encoded label equals <label>, the run start
+#                                 falls 0..DRAIN_LABELED_JOIN_WINDOW_S AFTER the kick's
+#                                 creation, and no other run claims the same kick
+#   kick-not-label-kick         — wrong workflow path, wrong event kind, an unparseable
+#                                 run-name, or a label mismatch (the C2-filtered relay
+#                                 job skips non-C2 labels, so their run records land here)
+#   kick-window-exceeded        — identity checks pass but the run start is before the
+#                                 kick or beyond the join window (a stale/replayed kick)
+#   kick-ref-reused             — the kick verifies, but it is not this run's alone
+# ONE KICK ATTESTS ONE RUN. A retried dispatch delivery can start two labeled runs inside
+# the join window, and age alone cannot tell them apart: both would verify against the one
+# relay record, each claim a queue item, and both count in completions_labeled_attested —
+# inflating C2 eligibility from a single genuine event. EVERY contender is rejected rather
+# than the first (or earliest) being awarded the kick: a winner-picking rule would make the
+# verdict depend on evaluation order, and a duplicate fire is unexplained evidence, not a
+# tie to settle. Reattesting an exclusive claim is unaffected — a run is never its own
+# rival. LIMIT: attest-fire-origin.sh's recorded-positive short-circuit means a run already
+# attested in an earlier invocation stays attested if a contender appears afterwards;
+# invalidating a durably recorded attestation is a separate contract.
+# Any malformed input fails closed as kick-not-label-kick.
+drain_labeled_kick_attest() {
+  # rivals is REQUIRED, not defaulted: under the callers' `set -u` a forgotten argument
+  # aborts loudly instead of silently reading as "this claim is exclusive".
+  local run_start="$1" label="$2" kick="$3" rivals="$4"
+  local kpath kevent ktitle kcreated parsed kissue klabel kepoch delta
+  kpath="$(jq -r '.path // empty' <<<"$kick" 2>/dev/null || true)"
+  kevent="$(jq -r '.event // empty' <<<"$kick" 2>/dev/null || true)"
+  ktitle="$(jq -r '.display_title // empty' <<<"$kick" 2>/dev/null || true)"
+  kcreated="$(jq -r '.created_at // empty' <<<"$kick" 2>/dev/null || true)"
+  if [[ "$kpath" != "$DRAIN_LABEL_KICK_WORKFLOW" || "$kevent" != "issues" ]]; then
+    printf 'kick-not-label-kick\n'
+    return 0
+  fi
+  parsed="$(drain_parse_label_kick_title "$ktitle")"
+  if [[ -z "$parsed" ]]; then
+    printf 'kick-not-label-kick\n'
+    return 0
+  fi
+  IFS=$'\t' read -r kissue klabel <<<"$parsed"
+  : "$kissue" # the kick's issue is audit data only: a kick WAKES the drain, which still
+  # claims the queue head, so the kick's issue and the claimed issue legitimately differ.
+  if [[ "$klabel" != "$label" ]]; then
+    printf 'kick-not-label-kick\n'
+    return 0
+  fi
+  kepoch="$(drain_ts_to_epoch "$kcreated")"
+  if [[ -z "$kepoch" ]]; then
+    printf 'kick-not-label-kick\n'
+    return 0
+  fi
+  delta=$((run_start - kepoch))
+  if (( delta < 0 || delta > DRAIN_LABELED_JOIN_WINDOW_S )); then
+    printf 'kick-window-exceeded\n'
+    return 0
+  fi
+  # Last, so a kick that never verified keeps its more specific reason: exclusivity only
+  # decides between "this run earned the kick" and "nobody can be said to have".
+  if [[ -n "${rivals//[[:space:]]/}" ]]; then
+    printf 'kick-ref-reused\n'
+    return 0
+  fi
+  printf 'attested\t%s\n' "$kcreated"
+}
+
 # Outer-session transcript root: $HOME/.claude/projects/<slug>/<uuid>.jsonl.
 # Overridable so the gate test can point it at synthetic fixtures.
 DRAIN_TRANSCRIPT_ROOT="${DRAIN_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
@@ -343,9 +449,13 @@ drain_timeout_bin() {
 
 # drain_new_run_id <fire_kind> — per-run identity stamped into the lease
 # session_id, the wrapper span, the OTel resource attrs, and the return record.
-# Phase 1: fire_kind is a best-effort LOCAL stand-in. Platform-attested
-# scheduled-fire identity (trigger-dispatch.md "Authenticated run context") does
-# not exist until the Phase 2 Desktop scheduler surface runs the drain.
+# fire_kind vocabulary: manual | scheduled | labeled (scratch#42; a labeled fire
+# additionally carries --kick-ref, see drain-next.sh). The stamp is a best-effort
+# LOCAL claim in every case — attest-fire-origin.sh is what verifies it
+# (slot-alignment for scheduled, relay-run verification for labeled); platform-
+# attested scheduled-fire identity (trigger-dispatch.md "Authenticated run
+# context") does not exist until the Phase 2 Desktop scheduler surface runs the
+# drain.
 drain_new_run_id() {
   local kind="${1:-manual}" rand
   rand="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"

@@ -18,7 +18,12 @@
 #      grid (scratch#66), incl. the seeded-gap revalidation, coalescing, the
 #      judgeability boundary, the cadence-flip floor, window-independent dedup
 #      identity, and the evidence-proven activation floor.
-#   14. drain_corrected_run_map — the corrected-run set the C2 predicate excludes from
+#   14. label-kick attestation (scratch#42) — the relay run-name parser, the pure
+#      kick-verification decision (incl. one-kick-one-run exclusivity), and
+#      attest-fire-origin.sh's labeled-* branch (kick_ref lookup, relay-record
+#      verification, fail-closed reasons, duplicate-claim rejection, durability)
+#      off a local relay-record fixture (DRAIN_RELAY_RUNS_FILE — no network).
+#   15. drain_corrected_run_map — the corrected-run set the C2 predicate excludes from
 #      its input set (scratch#60), incl. the fail-closed contract on a corrupt file, a
 #      row naming no run, and a row naming a run no join row carries.
 set -euo pipefail
@@ -611,14 +616,156 @@ assert_eq "missed-fire: an off-hour fire proves activation and re-enables judgem
   "$(head -1 <<<"$("$DETECT" "${amb_args[@]}" 2>/dev/null)")" \
   "missed-fire(dry): would file '$(drain_missed_fire_title 2026-07-22T19:30:00Z)'"
 
-# --- 14. corrected-run exclusion (drain_corrected_run_map) -------------------
+# --- 14. label-kick attestation (scratch#42) ---------------------------------
+# Event-driven fires have no cron slot; a labeled-* run attests by verifying its
+# RECORDED kick claim (run-state kick_ref -> the label-kick relay workflow run) against
+# the platform's record of that run. The pure pieces (run-name parser, kick-verification
+# decision) run in-process; the attest-fire-origin.sh branch runs end-to-end off a local
+# relay-record fixture via DRAIN_RELAY_RUNS_FILE — no network in this tier.
+
+# 14a. run-name parser: coupled to label-kick.yml's run-name expression.
+assert_eq "label-kick parser: relay run-name parses to issue<TAB>label" \
+  "$(drain_parse_label_kick_title 'label-kick issue #7 label [work-class: c2]')" \
+  "$(printf '7\twork-class: c2')"
+assert_eq "label-kick parser: a non-relay title parses to nothing (fail closed)" \
+  "$(drain_parse_label_kick_title 'deterministic-gate')" ""
+
+# 14b. pure kick verification. Reference kick: created 12:00:05Z; a run starting 85s
+# later (12:01:30Z) is in-window.
+kick_json() { # <path> <event> <title> <created_at>
+  jq -cn --arg p "$1" --arg e "$2" --arg t "$3" --arg c "$4" \
+    '{path:$p, event:$e, display_title:$t, created_at:$c}'
+}
+good_kick="$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" issues \
+  'label-kick issue #7 label [work-class: c2]' '2026-07-30T12:00:05Z')"
+run_start_epoch="$(drain_ts_to_epoch '2026-07-30T12:01:30Z')"
+assert_eq "labeled attest (pure): matching kick within window attests" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' "$good_kick" '')" \
+  "$(printf 'attested\t2026-07-30T12:00:05Z')"
+assert_eq "labeled attest (pure): wrong workflow path rejected" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json '.github/workflows/gate.yml' issues 'label-kick issue #7 label [work-class: c2]' '2026-07-30T12:00:05Z')" '')" \
+  "kick-not-label-kick"
+assert_eq "labeled attest (pure): wrong event kind rejected" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" workflow_dispatch 'label-kick issue #7 label [work-class: c2]' '2026-07-30T12:00:05Z')" '')" \
+  "kick-not-label-kick"
+assert_eq "labeled attest (pure): label mismatch rejected (skipped non-C2 relay run)" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" issues 'label-kick issue #7 label [bug]' '2026-07-30T12:00:05Z')" '')" \
+  "kick-not-label-kick"
+assert_eq "labeled attest (pure): stale kick beyond the join window rejected" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" issues 'label-kick issue #7 label [work-class: c2]' '2026-07-30T11:40:00Z')" '')" \
+  "kick-window-exceeded"
+assert_eq "labeled attest (pure): kick AFTER the run start rejected (negative delta)" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" issues 'label-kick issue #7 label [work-class: c2]' '2026-07-30T12:05:00Z')" '')" \
+  "kick-window-exceeded"
+# One kick attests one run. A retried dispatch delivery can start two labeled runs against
+# a single relay record; age alone cannot separate them, so EVERY contender is rejected —
+# awarding the kick to a first or earliest claimant would make the verdict order-dependent.
+assert_eq "labeled attest (pure): a kick another run also claims attests NEITHER" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' "$good_kick" \
+    'labeled-20260730T120135Z-eeeeeeee')" \
+  "kick-ref-reused"
+assert_eq "labeled attest (pure): reuse is judged only after the kick itself verifies" \
+  "$(drain_labeled_kick_attest "$run_start_epoch" 'work-class: c2' \
+    "$(kick_json "$DRAIN_LABEL_KICK_WORKFLOW" issues 'label-kick issue #7 label [bug]' '2026-07-30T12:00:05Z')" \
+    'labeled-20260730T120135Z-eeeeeeee')" \
+  "kick-not-label-kick"
+
+# 14c. attest-fire-origin.sh labeled-* branch, end-to-end off fixtures. Fresh evidence
+# tree; the relay-record source is the DRAIN_RELAY_RUNS_FILE override.
+labeled_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$labeled_tmp"' EXIT
+export DRAIN_TRANSCRIPT_ROOT="$labeled_tmp/projects"
+export DRAIN_ARTIFACT_DIR="$labeled_tmp/artifacts"
+export DRAIN_ATTESTATIONS="$labeled_tmp/artifacts/fire-attestations.jsonl"
+export DRAIN_RELAY_RUNS_FILE="$labeled_tmp/relay-runs.jsonl"
+mkdir -p "$DRAIN_TRANSCRIPT_ROOT" "$DRAIN_ARTIFACT_DIR"
+# Relay records: run 111 is a genuine C2 kick; 222 carries a non-C2 label.
+{ jq -cn --arg p "$DRAIN_LABEL_KICK_WORKFLOW" \
+    '{id:111, path:$p, event:"issues",
+      display_title:"label-kick issue #7 label [work-class: c2]",
+      created_at:"2026-07-30T12:00:05Z"}'
+  jq -cn --arg p "$DRAIN_LABEL_KICK_WORKFLOW" \
+    '{id:222, path:$p, event:"issues",
+      display_title:"label-kick issue #8 label [bug]",
+      created_at:"2026-07-30T12:00:05Z"}'; } >"$DRAIN_RELAY_RUNS_FILE"
+# Run-state rows: lk1 claims kick 111 on issue #9 — deliberately NOT the kick's issue #7
+# (a kick wakes the drain; the drain still claims the queue head). lk2 has no kick_ref;
+# lk3 names an unknown run; lk4 names the non-C2 relay run.
+lk1="labeled-20260730T120130Z-aaaaaaaa"
+lk2="labeled-20260730T120130Z-bbbbbbbb"
+lk3="labeled-20260730T120130Z-cccccccc"
+lk4="labeled-20260730T120130Z-dddddddd"
+{ jq -cn --arg r "$lk1" '{run_id:$r, issue:9, status:"claimed", kick_ref:"111"}'
+  jq -cn --arg r "$lk2" '{run_id:$r, issue:10, status:"claimed"}'
+  jq -cn --arg r "$lk3" '{run_id:$r, issue:11, status:"claimed", kick_ref:"999"}'
+  jq -cn --arg r "$lk4" '{run_id:$r, issue:12, status:"claimed", kick_ref:"222"}'
+} >"$DRAIN_ARTIFACT_DIR/drain-runs.jsonl"
+l1="$("$ATTEST" "$lk1")"
+assert_eq "labeled attest: verified kick attests (claimed issue may differ from kick's)" \
+  "$(att_flag "$l1")" "true"
+assert_eq "labeled attest: verified reason kick-verified" "$(att_reason "$l1")" "kick-verified"
+assert_eq "labeled attest: enqueue_ts carries the kick's platform creation time" \
+  "$(att_ets "$l1")" "2026-07-30T12:00:05Z"
+assert_eq "labeled attest: slot_offset stays null (no cron slot on an event fire)" \
+  "$(att_off "$l1")" "null"
+l2="$("$ATTEST" "$lk2")"
+assert_eq "labeled attest: run without a recorded kick_ref fails closed" \
+  "$(att_reason "$l2")" "no-kick-ref"
+l3="$("$ATTEST" "$lk3")"
+assert_eq "labeled attest: kick_ref naming an unknown relay run fails closed" \
+  "$(att_reason "$l3")" "no-relay-record"
+l4="$("$ATTEST" "$lk4")"
+assert_eq "labeled attest: kick_ref naming a non-C2 relay run fails closed" \
+  "$(att_reason "$l4")" "kick-not-label-kick"
+# Duplicate delivery: a second run records the SAME kick 111 that lk1 already claims. The
+# kick verifies for both, so age cannot separate them — neither may attest, or one genuine
+# event would count twice in completions_labeled_attested. Asserted from BOTH sides, since
+# a rule that awarded the kick to one claimant would pass when read from that side only.
+lk5="labeled-20260730T120135Z-eeeeeeee"
+jq -cn --arg r "$lk5" '{run_id:$r, issue:13, status:"claimed", kick_ref:"111"}' \
+  >>"$DRAIN_ARTIFACT_DIR/drain-runs.jsonl"
+l4b="$("$ATTEST" "$lk5")"
+assert_eq "labeled attest: a kick_ref another run claims fails closed (second claimant)" \
+  "$(att_reason "$l4b")" "kick-ref-reused"
+assert_eq "labeled attest: ...and the first claimant loses it too (no order-dependent win)" \
+  "$(att_reason "$("$ATTEST" "$lk1")")" "kick-ref-reused"
+# Remove the duplicate: the surviving exclusive claim attests again (a run is never its
+# own rival), which is what the rest of this block depends on.
+grep -vF "$lk5" "$DRAIN_ARTIFACT_DIR/drain-runs.jsonl" >"$DRAIN_ARTIFACT_DIR/runs.tmp"
+mv "$DRAIN_ARTIFACT_DIR/runs.tmp" "$DRAIN_ARTIFACT_DIR/drain-runs.jsonl"
+assert_eq "labeled attest: an exclusive claim still attests once the duplicate is gone" \
+  "$(att_reason "$("$ATTEST" "$lk1")")" "kick-verified"
+# Durability: --record the positive, then drop the relay-record source entirely — the
+# recorded positive must survive (same contract as a GC'd transcript on the scheduled path).
+"$ATTEST" --record "$lk1" >/dev/null
+: >"$DRAIN_RELAY_RUNS_FILE"
+l5="$("$ATTEST" --record "$lk1")"
+assert_eq "labeled attest: durability survives relay-record loss (attested)" \
+  "$(att_flag "$l5")" "true"
+assert_eq "labeled attest: durability reason recorded" "$(att_reason "$l5")" "recorded"
+assert_eq "labeled attest: recorded exactly once (idempotent append)" \
+  "$(grep -cF "$lk1" "$DRAIN_ATTESTATIONS")" "1"
+# Unreadable relay-record source (present but unparseable) is UNDETERMINABLE, not a
+# determined negative: relay-unreadable, never persisted, recomputable.
+printf '{"id":111 TRUNCATED\n' >"$DRAIN_RELAY_RUNS_FILE"
+l6="$("$ATTEST" "$lk3")"
+assert_eq "labeled attest: unreadable relay-record source reads relay-unreadable" \
+  "$(att_reason "$l6")" "relay-unreadable"
+unset DRAIN_RELAY_RUNS_FILE
+
+# --- 15. corrected-run exclusion (drain_corrected_run_map) -------------------
 # Runs whose PR needed a delegated pre-merge correction are not autonomous completions
 # (scratch#60). predicate-c2.sh enriches every join row with `corrected` from this map and
 # predicate-c2.sql drops those rows from its INPUT SET. The SQL half is exercised in the
 # duckdb tier (tests/predicate-c2-sql.test.sh); the map's return contract is pure and
 # belongs here, in the tier the gate actually runs.
 corr_tmp="$(mktemp -d)"
-trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$corr_tmp"' EXIT
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$labeled_tmp" "$corr_tmp"' EXIT
 corr_known=$'scheduled-A\nscheduled-B\nscheduled-C'
 corr_map() { # <file> [<known_run_ids>] — the map, or "rc=<n>" when the helper fails closed
   local out

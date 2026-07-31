@@ -55,6 +55,19 @@ row() {
       corrected:$c}'
 }
 
+# krow <issue> <completed-day> <fire-kind> <attested-bool> [<corrected-bool>] — like row,
+# but with an explicit fire_kind + fire_attested (labeled/manual cohort rows, scratch#42);
+# always mature so a leak into the eligibility aggregates would be maximally visible.
+# `corrected` defaults false for the same reason it does on row(): predicate-c2.sh writes
+# it on EVERY row, and a fixture row missing it would be dropped by the SQL's filters.
+krow() {
+  jq -cn --arg u "https://github.com/o/r/issues/$1" --arg r "${3}-$1" \
+    --arg ca "${2}T00:00:00Z" --arg k "$3" --argjson a "$4" --argjson c "${5:-false}" \
+    '{item_url:$u, run_id:$r, fire_kind:$k, fire_attested:$a,
+      completed_at:$ca, gate_conclusion:"success", reverted:null, completion_mature:true,
+      corrected:$c}'
+}
+
 assert_eq() { # <name> <actual> <expected>
   if [[ "$2" == "$3" ]]; then
     printf 'ok - %s\n' "$1"
@@ -82,6 +95,41 @@ pos="$tmp/pos.jsonl"
 jq -c 'if .run_id=="scheduled-99" then .completion_mature=true else . end' "$burst" >"$pos"
 assert_eq "predicate: 21 mature spanning 8 days is ELIGIBLE (positive control)" \
   "$(eval_eligible "$pos")" "true"
+
+# labeled cohort (scratch#42): attested event-driven completions are SURFACED
+# (completions_labeled_attested) but must not enter the eligibility input set until
+# activation. Take the INELIGIBLE burst fixture (20 mature clustered in 2 days) and add
+# an attested, MATURE labeled completion 8 days out: were labeled rows leaking into the
+# rows CTE, that row would establish the >=7-day span and 21st completion exactly like
+# the positive control — so the fixture stays INELIGIBLE only while the exclusion holds.
+lab="$tmp/labeled.jsonl"
+{ cat "$burst"; krow 77 "2026-07-09" labeled true; } >"$lab"
+assert_eq "predicate: an attested labeled completion is surfaced (count 1)" \
+  "$(eval_col "$lab" completions_labeled_attested)" "1"
+assert_eq "predicate: an attested labeled completion cannot enter the eligibility input set (still INELIGIBLE)" \
+  "$(eval_eligible "$lab")" "false"
+# The burst fixture holds 21 scheduled rows (20 mature + the young straggler); the mature
+# labeled row would read 22 raw / 21 mature if it leaked into the scheduled aggregates.
+assert_eq "predicate: labeled row absent from the raw scheduled completion count (21, not 22)" \
+  "$(eval_col "$lab" completions)" "21"
+assert_eq "predicate: labeled row absent from the mature completion count (20, not 21)" \
+  "$(eval_col "$lab" completions_mature)" "20"
+
+# unattested labeled and manual rows count NOWHERE: not in the labeled surface column
+# (fail-closed on attestation, like the scheduled path) and not in eligibility.
+lab_neg="$tmp/labeled-neg.jsonl"
+{ cat "$burst"; krow 78 "2026-07-09" labeled false; krow 79 "2026-07-09" manual true; } >"$lab_neg"
+assert_eq "predicate: an UNATTESTED labeled completion is not surfaced (count 0)" \
+  "$(eval_col "$lab_neg" completions_labeled_attested)" "0"
+assert_eq "predicate: manual/unattested rows leave eligibility untouched (still INELIGIBLE)" \
+  "$(eval_eligible "$lab_neg")" "false"
+# A CORRECTED labeled run is not an autonomous completion either, whatever fired it, so the
+# surfaced count applies the same exclusion the eligibility input set does — otherwise the
+# preview would contradict the count it previews at activation.
+lab_corr="$tmp/labeled-corrected.jsonl"
+{ cat "$burst"; krow 80 "2026-07-09" labeled true true; } >"$lab_corr"
+assert_eq "predicate: a CORRECTED labeled completion is not surfaced (count 0)" \
+  "$(eval_col "$lab_corr" completions_labeled_attested)" "0"
 
 # corrected-run exclusion (scratch#60): the run at the far edge of the window is mature and
 # gate-green, but its PR needed a delegated pre-merge correction — so it is not an

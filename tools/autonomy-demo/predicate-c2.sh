@@ -64,7 +64,7 @@ while [[ "$i" -lt "$n" ]]; do
 done
 
 if [[ ! -s "$join_all" ]]; then
-  echo '[{"completions":0,"completions_mature":0,"window_span_days":0,"gate_pass_rate":0.0,"human_revert_count":0,"predicate_eligible":false}]'
+  echo '[{"completions_labeled_attested":0,"completions":0,"completions_mature":0,"window_span_days":0,"gate_pass_rate":0.0,"human_revert_count":0,"predicate_eligible":false}]'
   exit 0
 fi
 
