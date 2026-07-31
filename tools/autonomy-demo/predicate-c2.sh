@@ -123,6 +123,38 @@ while IFS= read -r line; do
 done <"$join_all" >>"${join_all}.mature"
 mv "${join_all}.mature" "$join_all"
 
+# Enrich each join row with `corrected`: true when the run's PR needed a delegated
+# pre-merge correction (a fix the verifying session made to the drain's output before
+# merge). The predicate's completion definition is claim->implement->PR with no help, and
+# a corrected run had help — so the SQL drops these from its INPUT SET, not merely from
+# the completion count: a repaired run that happened to be the earliest or latest mature
+# completion would otherwise still establish the >=7-day span, and the eligibility gate
+# would open before seven days of genuinely autonomous evidence existed.
+#
+# Unlike fire_attested (a DESIGNED per-row exclusion that warns and carries on) an
+# unreadable corrections file is evidence breakage and ABORTS: reading it as "nothing was
+# corrected" would silently restore the very miscount this filter exists to remove. A
+# MISSING file is the legitimate empty (`.artifacts/` is gitignored) and yields {}.
+# Like fire_attested and completion_mature, the column must be on EVERY row — duckdb
+# infers the schema from these rows, and a first row missing it would drop the column and
+# make the SQL's `corrected = false` filter a binder error.
+#
+# The join rows' own run_ids are handed to the map builder so every correction is proven
+# APPLICABLE, not merely well-formed: this file is hand-maintained, so a mistyped run_id
+# would otherwise enrich nothing, leave the actually-corrected run at `corrected: false`,
+# and let it count toward C2 — the silent miscount this whole filter removes. A correction
+# naming a run absent from the join set is therefore evidence breakage and aborts too.
+# `tr -d '\r'` guards jq.exe's Windows CRLF at this boundary (as above); sort -u because a
+# run legitimately contributes several join rows.
+join_run_ids="$(jq -r '.run_id // empty' "$join_all" | tr -d '\r' | sort -u)"
+if ! corrected_map="$(drain_corrected_run_map "$DRAIN_RUN_CORRECTIONS" "$join_run_ids")"; then
+  echo "predicate-c2: FATAL run-corrections.jsonl unusable ($DRAIN_RUN_CORRECTIONS) — unparseable, a row carries no run_id, or a row names a run_id no join row carries (mistyped?); corrected-run exclusion undeterminable — aborting" >&2
+  exit 1
+fi
+jq -c --argjson m "$corrected_map" '. + {corrected: ($m[.run_id] // false)}' \
+  "$join_all" >"${join_all}.corrected"
+mv "${join_all}.corrected" "$join_all"
+
 join_path="$join_all"
 if command -v cygpath >/dev/null 2>&1; then join_path="$(cygpath -m "$join_all")"; fi
 

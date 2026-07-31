@@ -33,6 +33,17 @@
 -- row with fire_attested; rows that fail attestation (fire_attested = false) are
 -- excluded here, fail-closed.
 --
+-- Delegated pre-merge corrections: the completion definition is claim->implement->PR with
+-- NO help, and a run whose PR the verifying session had to fix before merge had help.
+-- predicate-c2.sh enriches each row with `corrected` from the operator-maintained
+-- run-corrections.jsonl. The exclusion is from the INPUT SET, not from the completion
+-- count alone, so EVERY aggregate below -- count, span, gate pass rate, revert count --
+-- computes over genuinely autonomous completions only: a repaired run that happened to be
+-- the earliest or latest mature completion would otherwise still establish the >=7-day
+-- span, opening the gate before seven days of autonomous evidence existed. `corrected =
+-- false` (not `IS NOT TRUE`) is deliberate: a NULL makes the predicate false and drops the
+-- row, so an unenriched row fails CLOSED.
+--
 -- Event-driven (labeled) fires: fire_kind = 'labeled' rows carry a kick-verified
 -- attestation (attest-fire-origin.sh's relay-run path, scratch#42) but do NOT enter
 -- the eligibility input set yet — until the push-capable dispatch hop exists, the
@@ -42,12 +53,16 @@
 -- are visible from the first real fire; activation is the one-line reviewed change
 -- `fire_kind IN ('scheduled', 'labeled')` in the rows CTE, at which point every
 -- filter and aggregate here applies to them uniformly. 'manual' and unknown kinds
--- stay excluded in both states (the kind filter admits listed values only).
+-- stay excluded in both states (the kind filter admits listed values only). The labeled
+-- CTE carries the SAME `corrected = false` filter: a corrected run is not an autonomous
+-- completion whatever fired it, and the surfaced count would otherwise contradict the
+-- eligibility count it previews.
 WITH rows AS (
   SELECT *
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'scheduled'
     AND fire_attested = true
+    AND corrected = false
     AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 ),
 labeled AS (
@@ -55,6 +70,7 @@ labeled AS (
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'labeled'
     AND fire_attested = true
+    AND corrected = false
     AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 )
 SELECT

@@ -23,6 +23,9 @@
 #      attest-fire-origin.sh's labeled-* branch (kick_ref lookup, relay-record
 #      verification, fail-closed reasons, duplicate-claim rejection, durability)
 #      off a local relay-record fixture (DRAIN_RELAY_RUNS_FILE — no network).
+#   15. drain_corrected_run_map — the corrected-run set the C2 predicate excludes from
+#      its input set (scratch#60), incl. the fail-closed contract on a corrupt file, a
+#      row naming no run, and a row naming a run no join row carries.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -345,8 +348,9 @@ assert_eq "merge maturity: explicit +00:00 offset accepted (mature)" \
 # drain-common.sh). The network orchestration (gh pr view / check-run API, merge-commit-
 # first gate resolution) is not unit-tested here — no gh/network in this tier — but the
 # load-bearing decisions are: the gate verdict, complete-run enumeration + its fail-closed
-# contract, revert detection (section 3 above, reused directly by Check B), and the
-# idempotency key.
+# contract, revert detection (section 3 above, reused directly by Check B), the
+# idempotency key, and the operator-acknowledgment probe that routes a detected event to
+# the reported-only counter instead of the one forcing exit 1.
 
 # 12a. drain_gate_verdict — success is the ONLY clean conclusion; every non-success enum
 # value AND an empty (no gate check-run on a merged PR = bypass) are contrary; an
@@ -440,6 +444,58 @@ if drain_demotion_already_recorded "gate-regression" "cafed00d" "$events_f"; the
 else
   pass "demotion re-run: a new merge_sha is not yet recorded"
 fi
+
+# 12e. drain_demotion_acknowledged — the operator-disposition probe (scratch#57). Same
+# (kind, merge_sha) key as the dedup probe, so an ack addresses exactly one recorded event.
+# It decides only WHICH counter a detected event increments, so its return contract is the
+# load-bearing decision: rc 0 mutes exit 1 for that event, rc 1 (the default) keeps it
+# failing loud, rc 3 aborts rather than guessing at a human judgement in either direction.
+ack_rc() { # <kind> <merge_sha> <file> — the helper's rc, captured under set -e
+  if drain_demotion_acknowledged "$1" "$2" "$3"; then printf 0; else printf '%s' "$?"; fi
+}
+assert_eq "demotion ack: (revert, abc123) with a disposition_url is acknowledged (rc 0)" \
+  "$(ack_rc revert abc123 "$FIXTURES/demotion-acks-sample.jsonl")" "0"
+assert_eq "demotion ack: a different merge_sha is unacknowledged (rc 1, stays contrary)" \
+  "$(ack_rc revert def456 "$FIXTURES/demotion-acks-sample.jsonl")" "1"
+assert_eq "demotion ack: a different kind is unacknowledged (rc 1, stays contrary)" \
+  "$(ack_rc gate-regression abc123 "$FIXTURES/demotion-acks-sample.jsonl")" "1"
+assert_eq "demotion ack: missing acks file is unacknowledged (rc 1) — the default posture" \
+  "$(ack_rc revert abc123 "$FIXTURES/no-acks-file.jsonl")" "1"
+# Fail-closed, mirroring the events-file guard: a corrupt acks file must NOT read as
+# unacknowledged-and-carry-on, because the same file is what mutes a real alarm.
+assert_eq "demotion ack: corrupt acks file FAILS CLOSED (rc 3, not 1)" \
+  "$(ack_rc revert abc123 "$FIXTURES/demotion-acks-malformed.jsonl.malformed")" "3"
+# A row keyed correctly but carrying no disposition of record is not a disposition; honouring
+# it would let a half-written ack silently mute an event with nowhere to read the judgement.
+acks_f="$dedup_tmp/demotion-acks.jsonl"
+{ jq -cn '{kind:"revert", merge_sha:"nourl"}'
+  jq -cn '{kind:"revert", merge_sha:"emptyurl", disposition_url:""}'
+  jq -cn '{kind:"revert", merge_sha:"blankurl", disposition_url:"   "}'
+  jq -cn '{kind:"revert", merge_sha:"notaurl", disposition_url:"disposed of in standup"}'
+  jq -cn '{kind:"revert", merge_sha:"numericurl", disposition_url:42}'
+  jq -cn '{kind:"revert", merge_sha:"paddedurl",
+    disposition_url:"  https://x/issues/1#issuecomment-3  "}'
+  jq -cn '{kind:"gate-regression", merge_sha:"feedface",
+    disposition_url:"https://x/issues/1#issuecomment-2"}'; } >>"$acks_f"
+assert_eq "demotion ack: matching row with NO disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert nourl "$acks_f")" "3"
+assert_eq "demotion ack: matching row with an EMPTY disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert emptyurl "$acks_f")" "3"
+# Non-empty is not enough: this file is hand-maintained, and a value that is not a usable
+# link is the same "nowhere to read the judgement" state an empty one is — muting a real
+# alarm on it is the failure mode the fail-closed contract exists to prevent.
+assert_eq "demotion ack: WHITESPACE-ONLY disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert blankurl "$acks_f")" "3"
+assert_eq "demotion ack: NON-URL disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert notaurl "$acks_f")" "3"
+assert_eq "demotion ack: NON-STRING disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert numericurl "$acks_f")" "3"
+# ...but a real link the operator pasted with stray surrounding whitespace IS a
+# disposition of record: trim first, then judge the form.
+assert_eq "demotion ack: a URL padded with whitespace is trimmed and acknowledged (rc 0)" \
+  "$(ack_rc revert paddedurl "$acks_f")" "0"
+assert_eq "demotion ack: a well-formed row among incomplete ones is still acknowledged" \
+  "$(ack_rc gate-regression feedface "$acks_f")" "0"
 
 # --- 13. detect-missed-fire.sh -----------------------------------------------
 # Missed-fire detector (scratch#66): re-specced against the BOUND 15-min slot grid
@@ -701,6 +757,66 @@ l6="$("$ATTEST" "$lk3")"
 assert_eq "labeled attest: unreadable relay-record source reads relay-unreadable" \
   "$(att_reason "$l6")" "relay-unreadable"
 unset DRAIN_RELAY_RUNS_FILE
+
+# --- 15. corrected-run exclusion (drain_corrected_run_map) -------------------
+# Runs whose PR needed a delegated pre-merge correction are not autonomous completions
+# (scratch#60). predicate-c2.sh enriches every join row with `corrected` from this map and
+# predicate-c2.sql drops those rows from its INPUT SET. The SQL half is exercised in the
+# duckdb tier (tests/predicate-c2-sql.test.sh); the map's return contract is pure and
+# belongs here, in the tier the gate actually runs.
+corr_tmp="$(mktemp -d)"
+trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$labeled_tmp" "$corr_tmp"' EXIT
+corr_known=$'scheduled-A\nscheduled-B\nscheduled-C'
+corr_map() { # <file> [<known_run_ids>] — the map, or "rc=<n>" when the helper fails closed
+  local out
+  if out="$(drain_corrected_run_map "$1" "${2-$corr_known}")"; then
+    printf '%s' "$out"
+  else printf 'rc=%s' "$?"; fi
+}
+assert_eq "corrected runs: missing file yields the empty map (rc 0) — the fresh-checkout state" \
+  "$(corr_map "$corr_tmp/absent.jsonl")" "{}"
+corr_f="$corr_tmp/run-corrections.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A",
+    pr_url:"https://x/pull/24", detail:"Refs -> Closes linkage fix"}'
+  jq -cn '{corrected_at:"2026-07-23T03:00:00Z", run_id:"scheduled-B"}'; } >>"$corr_f"
+assert_eq "corrected runs: parsed rows become a run_id -> true map" \
+  "$(corr_map "$corr_f")" '{"scheduled-A":true,"scheduled-B":true}'
+assert_eq "corrected runs: an uncorrected run_id is absent from the map (enriches to false)" \
+  "$(jq -r '.["scheduled-C"] // false' <<<"$(corr_map "$corr_f")")" "false"
+# Fail-closed: an unreadable corrections file must NOT degrade to "nothing was corrected",
+# which would silently restore the miscount this filter exists to remove.
+corr_bad="$corr_tmp/malformed.jsonl"
+jq -cn '{run_id:"scheduled-A"}' >>"$corr_bad"
+jq -rn '"{\"run_id\":\"scheduled-B\" TRUNCATED"' >>"$corr_bad"
+assert_eq "corrected runs: corrupt corrections file FAILS CLOSED (rc 3, not an empty map)" \
+  "$(corr_map "$corr_bad")" "rc=3"
+# A correction row naming no run cannot be applied to any join row; dropping it silently
+# would let the run it meant to exclude count as an autonomous completion.
+corr_norun="$corr_tmp/no-run-id.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A"}'
+  jq -cn '{corrected_at:"2026-07-22T04:00:00Z", detail:"forgot the run_id"}'; } >>"$corr_norun"
+assert_eq "corrected runs: a row with NO run_id FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_norun")" "rc=3"
+corr_emptyrun="$corr_tmp/empty-run-id.jsonl"
+jq -cn '{corrected_at:"2026-07-22T04:00:00Z", run_id:""}' >>"$corr_emptyrun"
+assert_eq "corrected runs: a row with an EMPTY run_id FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_emptyrun")" "rc=3"
+# Same defect class, and the likeliest one in practice: this file has no writer, so a
+# hand-mistyped run_id is caught by nothing else. It would enrich no join row, leave the
+# run it meant to exclude at `corrected: false`, and let it count toward C2 — so a
+# correction that matches no join row is unappliable evidence and fails closed too.
+corr_typo="$corr_tmp/typo-run-id.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A"}'
+  jq -cn '{corrected_at:"2026-07-22T04:00:00Z", run_id:"schedulde-B"}'; } >>"$corr_typo"
+assert_eq "corrected runs: a row naming a run NO join row carries FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_typo")" "rc=3"
+assert_eq "corrected runs: every correction applied to a join row still yields the map" \
+  "$(corr_map "$corr_f" $'scheduled-A\nscheduled-B')" '{"scheduled-A":true,"scheduled-B":true}'
+# The join set carries several rows per run; the caller de-duplicates, and a repeated id
+# must not change the verdict either way.
+assert_eq "corrected runs: a repeated known run_id is still applied (rc 0)" \
+  "$(corr_map "$corr_f" $'scheduled-A\nscheduled-B\nscheduled-A')" \
+  '{"scheduled-A":true,"scheduled-B":true}'
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"
