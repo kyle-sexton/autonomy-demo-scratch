@@ -52,8 +52,10 @@ current platform surface, so dispatch stays on the 15-min temporal grid; a
 future push-capable hop fires `drain-next.sh --fire-kind labeled --kick-ref
 <relay-run-id>`, whose completions attest via the relay record and surface in
 the predicate output as `completions_labeled_attested` (eligibility widens to
-them only at activation). Decisions, rejected alternatives, and deferral
-triggers are recorded on scratch#42.
+them only at activation). One kick attests one run: a `kick_ref` recorded by
+two runs — a retried dispatch delivery inside the join window — attests
+neither, so a single event cannot be counted twice. Decisions, rejected
+alternatives, and deferral triggers are recorded on scratch#42.
 
 Evidence files under `.artifacts/`:
 

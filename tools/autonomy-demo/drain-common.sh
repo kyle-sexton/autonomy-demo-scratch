@@ -162,22 +162,37 @@ drain_parse_label_kick_title() {
   printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 }
 
-# drain_labeled_kick_attest <run_start_epoch> <label> <kick_json> — PURE verification of
-# a claimed kick against the platform's run record for it (all inputs supplied; the gh
-# fetch lives in attest-fire-origin.sh). <kick_json> is the workflow-run object
-# projection {path, event, display_title, created_at}. Prints one line:
-#   attested\t<created_at_iso>  — the record is the relay workflow, an issues event,
-#                                 its run-name-encoded label equals <label>, and the run
-#                                 start falls 0..DRAIN_LABELED_JOIN_WINDOW_S AFTER the
-#                                 kick's creation
+# drain_labeled_kick_attest <run_start_epoch> <label> <kick_json> <rival_claimants> — PURE
+# verification of a claimed kick against the platform's run record for it (all inputs
+# supplied; the gh fetch lives in attest-fire-origin.sh). <kick_json> is the workflow-run
+# object projection {path, event, display_title, created_at}. <rival_claimants> is the
+# newline-separated set of OTHER drain runs that recorded the SAME kick_ref (empty when the
+# claim is exclusive). Prints one line:
+#   attested\t<created_at_iso>  — the record is the relay workflow, an issues event, its
+#                                 run-name-encoded label equals <label>, the run start
+#                                 falls 0..DRAIN_LABELED_JOIN_WINDOW_S AFTER the kick's
+#                                 creation, and no other run claims the same kick
 #   kick-not-label-kick         — wrong workflow path, wrong event kind, an unparseable
 #                                 run-name, or a label mismatch (the C2-filtered relay
 #                                 job skips non-C2 labels, so their run records land here)
 #   kick-window-exceeded        — identity checks pass but the run start is before the
 #                                 kick or beyond the join window (a stale/replayed kick)
+#   kick-ref-reused             — the kick verifies, but it is not this run's alone
+# ONE KICK ATTESTS ONE RUN. A retried dispatch delivery can start two labeled runs inside
+# the join window, and age alone cannot tell them apart: both would verify against the one
+# relay record, each claim a queue item, and both count in completions_labeled_attested —
+# inflating C2 eligibility from a single genuine event. EVERY contender is rejected rather
+# than the first (or earliest) being awarded the kick: a winner-picking rule would make the
+# verdict depend on evaluation order, and a duplicate fire is unexplained evidence, not a
+# tie to settle. Reattesting an exclusive claim is unaffected — a run is never its own
+# rival. LIMIT: attest-fire-origin.sh's recorded-positive short-circuit means a run already
+# attested in an earlier invocation stays attested if a contender appears afterwards;
+# invalidating a durably recorded attestation is a separate contract.
 # Any malformed input fails closed as kick-not-label-kick.
 drain_labeled_kick_attest() {
-  local run_start="$1" label="$2" kick="$3"
+  # rivals is REQUIRED, not defaulted: under the callers' `set -u` a forgotten argument
+  # aborts loudly instead of silently reading as "this claim is exclusive".
+  local run_start="$1" label="$2" kick="$3" rivals="$4"
   local kpath kevent ktitle kcreated parsed kissue klabel kepoch delta
   kpath="$(jq -r '.path // empty' <<<"$kick" 2>/dev/null || true)"
   kevent="$(jq -r '.event // empty' <<<"$kick" 2>/dev/null || true)"
@@ -207,6 +222,12 @@ drain_labeled_kick_attest() {
   delta=$((run_start - kepoch))
   if (( delta < 0 || delta > DRAIN_LABELED_JOIN_WINDOW_S )); then
     printf 'kick-window-exceeded\n'
+    return 0
+  fi
+  # Last, so a kick that never verified keeps its more specific reason: exclusivity only
+  # decides between "this run earned the kick" and "nobody can be said to have".
+  if [[ -n "${rivals//[[:space:]]/}" ]]; then
+    printf 'kick-ref-reused\n'
     return 0
   fi
   printf 'attested\t%s\n' "$kcreated"

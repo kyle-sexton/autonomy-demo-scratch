@@ -11,9 +11,12 @@
 #   labeled-*    — event-driven fire: the run's recorded kick_ref (the label-kick relay
 #                  workflow run id, see .github/workflows/label-kick.yml) is verified
 #                  against GitHub's own record of that run — workflow path, event kind,
-#                  run-name-encoded label, and a bounded kick->run-start window
+#                  run-name-encoded label, a bounded kick->run-start window, and the
+#                  claim's EXCLUSIVITY: one kick attests one run, so a kick_ref two runs
+#                  recorded (a retried dispatch delivery) attests neither
 #                  (drain_labeled_kick_attest, drain-common.sh). This path reads the
-#                  run-state file for the kick_ref and, unless DRAIN_RELAY_RUNS_FILE
+#                  run-state file for the kick_ref and its rival claimants and, unless
+#                  DRAIN_RELAY_RUNS_FILE
 #                  points at a local record set (tests), the GitHub API for the run
 #                  record — a gh transport failure emits relay-unreadable (excluded,
 #                  never persisted, recomputable — same posture as a GC'd transcript).
@@ -75,6 +78,21 @@ kick_ref_of() {
   jq -sr --arg rid "$1" '
     reduce .[] as $r ({}; .[$r.run_id] = ((.[$r.run_id] // {}) + $r))
     | .[$rid].kick_ref // empty' "$DRAIN_RUN_STATE" 2>/dev/null | tr -d '\r' || true
+}
+
+# kick_rivals_of <run_id> <kick_ref> — the OTHER runs whose run-state rows record the same
+# kick_ref, one per line (empty when the claim is exclusive). One kick attests one run, and
+# a retried dispatch delivery can start two labeled runs against a single relay record, so
+# the exclusivity of the claim is evidence the attestation depends on. Same
+# last-status-per-run_id flatten kick_ref_of uses; kick_ref is compared as a string because
+# the run-state value is a workflow-run id that may have been recorded either way.
+kick_rivals_of() {
+  [[ -f "$DRAIN_RUN_STATE" ]] || return 0
+  jq -sr --arg rid "$1" --arg ref "$2" '
+    reduce .[] as $r ({}; .[$r.run_id] = ((.[$r.run_id] // {}) + $r))
+    | to_entries[]
+    | select(.key != $rid and ((.value.kick_ref // "") | tostring) == $ref)
+    | .key' "$DRAIN_RUN_STATE" 2>/dev/null | tr -d '\r' || true
 }
 
 # kick_record_of <kick_ref> — the {path, event, display_title, created_at} projection of
@@ -147,7 +165,8 @@ for run_id in "$@"; do
       emit "$run_id" 0 "no-relay-record" "" "" ""
       continue
     fi
-    verdict="$(drain_labeled_kick_attest "$run_start" "$(drain_c2_label)" "$kick_json")"
+    verdict="$(drain_labeled_kick_attest "$run_start" "$(drain_c2_label)" "$kick_json" \
+      "$(kick_rivals_of "$run_id" "$kick_ref")")"
     if [[ "$verdict" != attested$'\t'* ]]; then
       emit "$run_id" 0 "$verdict" "" "" ""
       continue
