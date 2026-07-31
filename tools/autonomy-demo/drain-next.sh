@@ -15,7 +15,16 @@
 # `--dry-run` performs NO side effects: it prints what it WOULD claim (or
 # `no-work`) after a read-only reconcile report.
 #
-# Usage: drain-next.sh [--dry-run] [--fire-kind manual|scheduled] [--session-id <id>]
+# Usage: drain-next.sh [--dry-run] [--fire-kind manual|scheduled|labeled]
+#          [--kick-ref <label-kick-run-id>] [--session-id <id>]
+#
+# A `labeled` fire (scratch#42) is an event-driven kick: the dispatch hop that received
+# the label event passes the label-kick relay workflow's run id as --kick-ref, which is
+# recorded on the claimed run-state row. The kick_ref is a CLAIM — attest-fire-origin.sh
+# verifies it against GitHub's record of that run before the completion can count; a
+# labeled fire without a kick_ref can never attest (no-kick-ref, fail closed). The kick
+# only WAKES the drain: candidate selection stays queue-ordered (one-entrypoint
+# invariant), so the kick's issue and the claimed issue may differ.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +37,7 @@ ADAPTER_DIR="${DRAIN_REPO_ROOT}/tools/work-item-tracker/adapters/github"
 dry_run=false
 fire_kind="${DRAIN_FIRE_KIND:-manual}"
 session_id=""
+kick_ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -36,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fire-kind)
       fire_kind="${2:?--fire-kind needs a value}"
+      shift 2
+      ;;
+    --kick-ref)
+      kick_ref="${2:?--kick-ref needs a value}"
       shift 2
       ;;
     --session-id)
@@ -258,9 +272,13 @@ if [[ -z "$claimed_id" ]]; then
   exit 0
 fi
 
+# The claimed row carries kick_ref only when the fire supplied one (a labeled fire's
+# claim of the relay run that woke it; attest-fire-origin.sh verifies it later —
+# recording it here is what makes a labeled completion attestable at all).
 drain_record_run "$(jq -cn --arg r "$run_id" --arg i "$claimed_num" --arg u "$claimed_url" \
-  --arg ts "$(drain_iso_now)" \
-  '{run_id:$r, issue:($i|tonumber), item_url:$u, status:"claimed", ts:$ts}')"
+  --arg ts "$(drain_iso_now)" --arg kr "$kick_ref" \
+  '{run_id:$r, issue:($i|tonumber), item_url:$u, status:"claimed", ts:$ts}
+   + (if $kr == "" then {} else {kick_ref:$kr} end)')"
 
 # --- (c) dispatch -----------------------------------------------------------
 set +e

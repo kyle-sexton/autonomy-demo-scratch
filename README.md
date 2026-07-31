@@ -28,8 +28,10 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
 - `predicate-c2.sh` — evaluates the C2 promotion predicate over all
   complete drain runs (read-only reporter).
 - `attest-fire-origin.sh` — fails-closed attestation of a drain run's fire
-  origin (scheduled vs. manual), reconstructed from outer-session
-  transcript evidence.
+  origin, reconstructed from evidence the agent cannot write: outer-session
+  transcript enqueue records + cron-slot alignment for `scheduled-*` runs,
+  and the label-kick relay workflow's platform run record for `labeled-*`
+  runs (scratch#42). `manual-*` never attests.
 - `backup-evidence.sh` — snapshots the evidence surfaces to a timestamped
   backup folder and prunes to the last N snapshots.
 - `watch-demotion.sh` — post-merge demotion net: gate re-check on drained
@@ -40,6 +42,18 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   transcript enqueue evidence for grid slots with no fire, and would file a
   human-gated tracker item per coalesced gap (`--dry-run` for a read-only,
   network-free preview).
+
+Trigger surfaces (scratch#42): the label-kick surface is wired as far as the
+platform allows today. `.github/workflows/label-kick.yml` receives
+`issues.labeled` for the C2 label and records the platform-attested kick (the
+workflow run itself: id, path, run-name-encoded issue + label, timestamps) —
+it executes nothing. No push path reaches the local execution surface on any
+current platform surface, so dispatch stays on the 15-min temporal grid; a
+future push-capable hop fires `drain-next.sh --fire-kind labeled --kick-ref
+<relay-run-id>`, whose completions attest via the relay record and surface in
+the predicate output as `completions_labeled_attested` (eligibility widens to
+them only at activation). Decisions, rejected alternatives, and deferral
+triggers are recorded on scratch#42.
 
 Evidence files under `.artifacts/`:
 

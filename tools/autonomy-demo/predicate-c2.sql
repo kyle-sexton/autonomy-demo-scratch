@@ -32,14 +32,35 @@
 -- attests each run's origin from outer-session transcript evidence and enriches each
 -- row with fire_attested; rows that fail attestation (fire_attested = false) are
 -- excluded here, fail-closed.
+--
+-- Event-driven (labeled) fires: fire_kind = 'labeled' rows carry a kick-verified
+-- attestation (attest-fire-origin.sh's relay-run path, scratch#42) but do NOT enter
+-- the eligibility input set yet — until the push-capable dispatch hop exists, the
+-- labeled attestation path has zero live traffic, and a promotion-critical predicate
+-- must not widen onto a never-live-validated path. They are SURFACED instead
+-- (labeled CTE below -> completions_labeled_attested), so event-driven completions
+-- are visible from the first real fire; activation is the one-line reviewed change
+-- `fire_kind IN ('scheduled', 'labeled')` in the rows CTE, at which point every
+-- filter and aggregate here applies to them uniformly. 'manual' and unknown kinds
+-- stay excluded in both states (the kind filter admits listed values only).
 WITH rows AS (
   SELECT *
   FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
   WHERE fire_kind = 'scheduled'
     AND fire_attested = true
     AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
+),
+labeled AS (
+  SELECT COUNT(DISTINCT item_url || '#' || run_id) AS n
+  FROM read_json_auto('__JOIN_PATH__', format = 'newline_delimited')
+  WHERE fire_kind = 'labeled'
+    AND fire_attested = true
+    AND completed_at::TIMESTAMP >= '__WINDOW_START__'::TIMESTAMP
 )
 SELECT
+  -- informational only until labeled activation (see header): attested event-driven
+  -- completions in the window, kept out of every eligibility aggregate below.
+  (SELECT n FROM labeled) AS completions_labeled_attested,
   COUNT(DISTINCT item_url || '#' || run_id) AS completions,
   COUNT(DISTINCT CASE WHEN completion_mature THEN item_url || '#' || run_id END)
     AS completions_mature,

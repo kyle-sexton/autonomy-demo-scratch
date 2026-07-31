@@ -1,0 +1,52 @@
+name: label-kick
+
+# Push-receiving RELAY for the label-kick trigger surface (scratch#42). It executes NO
+# work (adapter obligation 1, trigger-dispatch.md) and touches nothing: its entire value
+# is the platform-attested run record GitHub creates for it — run id, workflow path,
+# event kind, run-name-encoded issue + label, timestamps — which is the "authenticated
+# run context" a future push-capable dispatch hop passes to drain-next.sh as --kick-ref
+# and attest-fire-origin.sh verifies fail-closed. Until that hop exists, the 15-min
+# temporal grid remains the only dispatch path to the local execution surface; decisions
+# and deferral triggers are recorded on scratch#42.
+#
+# Couplings that fail SILENTLY on drift (change together):
+#   - the workflow file path == DRAIN_LABEL_KICK_WORKFLOW in drain-common.sh (the
+#     attestor equality-checks the run record's `path` field against it);
+#   - the run-name expression below == drain_parse_label_kick_title's format;
+#   - the C2 label literal in the job `if` == the drain's claim label
+#     (drain_c2_label: binding triggers.drain.work_class_label, default
+#     "work-class: c2"). Workflow `if` expressions cannot read the binding, so the
+#     value is repeated here; a label mismatch only skips the job (the run record
+#     still fails the attestor's label check — fail closed, never a false attest).
+#
+# No `concurrency` group ON PURPOSE: each label event must keep its own run record
+# (a cancel-collapsed record would orphan a --kick-ref claim).
+
+run-name: "label-kick issue #${{ github.event.issue.number }} label [${{ github.event.label.name }}]"
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  record-kick:
+    name: record-kick
+    if: github.event.label.name == 'work-class: c2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      # Payload values ride in env, never interpolated into the script body, so a
+      # crafted issue title/label can't inject shell. Log-only: the durable record is
+      # the run itself; this step just makes the kick identity readable in the log.
+      - name: Record kick identity
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "label-kick: issue #${ISSUE_NUMBER} labeled '${LABEL_NAME}' by ${SENDER}"
+          echo "label-kick: kick_ref=${RUN_ID} (pass to drain-next.sh --kick-ref)"

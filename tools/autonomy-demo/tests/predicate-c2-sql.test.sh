@@ -28,15 +28,16 @@ fail=0
 
 to_native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 
-# eval_eligible <fixture.jsonl> — run predicate-c2.sql over the fixture, echo the
-# predicate_eligible boolean. Mirrors predicate-c2.sh's sed substitution of __JOIN_PATH__
-# and __WINDOW_START__ (window set well before the fixtures so it never filters them).
-eval_eligible() {
+# eval_field <fixture.jsonl> <field> — run predicate-c2.sql over the fixture, echo one
+# output field. Mirrors predicate-c2.sh's sed substitution of __JOIN_PATH__ and
+# __WINDOW_START__ (window set well before the fixtures so it never filters them).
+eval_field() {
   local jp sql
   jp="$(to_native "$1")"
   sql="$(sed -e "s#__JOIN_PATH__#${jp}#g" -e "s#__WINDOW_START__#2026-06-01T00:00:00Z#g" "$SQL")"
-  duckdb -json -c "$sql" | jq -r '.[0].predicate_eligible'
+  duckdb -json -c "$sql" | jq -r ".[0].$2"
 }
+eval_eligible() { eval_field "$1" predicate_eligible; }
 
 # row <issue> <completed-day> <mature-bool> — one join row (gate success, unreverted).
 row() {
@@ -44,6 +45,16 @@ row() {
     --arg ca "${2}T00:00:00Z" --argjson m "$3" \
     '{item_url:$u, run_id:$r, fire_kind:"scheduled", fire_attested:true,
       completed_at:$ca, gate_conclusion:"success", reverted:null, completion_mature:$m}'
+}
+
+# krow <issue> <completed-day> <fire-kind> <attested-bool> — like row, but with an
+# explicit fire_kind + fire_attested (labeled/manual cohort rows, scratch#42); always
+# mature so a leak into the eligibility aggregates would be maximally visible.
+krow() {
+  jq -cn --arg u "https://github.com/o/r/issues/$1" --arg r "${3}-$1" \
+    --arg ca "${2}T00:00:00Z" --arg k "$3" --argjson a "$4" \
+    '{item_url:$u, run_id:$r, fire_kind:$k, fire_attested:$a,
+      completed_at:$ca, gate_conclusion:"success", reverted:null, completion_mature:true}'
 }
 
 assert_eq() { # <name> <actual> <expected>
@@ -73,6 +84,34 @@ pos="$tmp/pos.jsonl"
 jq -c 'if .run_id=="scheduled-99" then .completion_mature=true else . end' "$burst" >"$pos"
 assert_eq "predicate: 21 mature spanning 8 days is ELIGIBLE (positive control)" \
   "$(eval_eligible "$pos")" "true"
+
+# labeled cohort (scratch#42): attested event-driven completions are SURFACED
+# (completions_labeled_attested) but must not enter the eligibility input set until
+# activation. Take the INELIGIBLE burst fixture (20 mature clustered in 2 days) and add
+# an attested, MATURE labeled completion 8 days out: were labeled rows leaking into the
+# rows CTE, that row would establish the >=7-day span and 21st completion exactly like
+# the positive control — so the fixture stays INELIGIBLE only while the exclusion holds.
+lab="$tmp/labeled.jsonl"
+{ cat "$burst"; krow 77 "2026-07-09" labeled true; } >"$lab"
+assert_eq "predicate: an attested labeled completion is surfaced (count 1)" \
+  "$(eval_field "$lab" completions_labeled_attested)" "1"
+assert_eq "predicate: an attested labeled completion cannot enter the eligibility input set (still INELIGIBLE)" \
+  "$(eval_eligible "$lab")" "false"
+# The burst fixture holds 21 scheduled rows (20 mature + the young straggler); the mature
+# labeled row would read 22 raw / 21 mature if it leaked into the scheduled aggregates.
+assert_eq "predicate: labeled row absent from the raw scheduled completion count (21, not 22)" \
+  "$(eval_field "$lab" completions)" "21"
+assert_eq "predicate: labeled row absent from the mature completion count (20, not 21)" \
+  "$(eval_field "$lab" completions_mature)" "20"
+
+# unattested labeled and manual rows count NOWHERE: not in the labeled surface column
+# (fail-closed on attestation, like the scheduled path) and not in eligibility.
+lab_neg="$tmp/labeled-neg.jsonl"
+{ cat "$burst"; krow 78 "2026-07-09" labeled false; krow 79 "2026-07-09" manual true; } >"$lab_neg"
+assert_eq "predicate: an UNATTESTED labeled completion is not surfaced (count 0)" \
+  "$(eval_field "$lab_neg" completions_labeled_attested)" "0"
+assert_eq "predicate: manual/unattested rows leave eligibility untouched (still INELIGIBLE)" \
+  "$(eval_eligible "$lab_neg")" "false"
 
 if [[ "$fail" -ne 0 ]]; then
   echo "predicate-c2.sql duckdb test: FAILED" >&2
