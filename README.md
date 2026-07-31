@@ -26,7 +26,8 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   telemetry, return-accounting record, deterministic-gate outcome, and PR
   merge state for one item+run.
 - `predicate-c2.sh` — evaluates the C2 promotion predicate over all
-  complete drain runs (read-only reporter).
+  complete drain runs (read-only reporter). Runs listed in
+  `run-corrections.jsonl` are excluded from its input set.
 - `attest-fire-origin.sh` — fails-closed attestation of a drain run's fire
   origin (scheduled vs. manual), reconstructed from outer-session
   transcript evidence.
@@ -50,22 +51,41 @@ Evidence files under `.artifacts/`:
   by `attest-fire-origin.sh --record`.
 - `demotion-events.jsonl` — post-merge demotion events, appended by
   `watch-demotion.sh`.
-- `demotion-acks.jsonl` — operator dispositions of those events. The only
-  hand-maintained evidence file: no script writes it. Append one object per
-  acknowledged event, keyed on the same `(kind, merge_sha)` pair the event
-  carries, with `disposition_url` pointing at the judgement of record (the
-  issue comment disposing of it). `watch-demotion.sh` keeps reporting an
-  acknowledged event and never deletes its row; it only stops counting it
-  toward the contrary total that forces exit 1, so one dispositioned false
-  positive cannot bury a real second event under a permanently red watcher.
-  Unacknowledged events keep failing loud, and a malformed file — or a row
-  whose `disposition_url` is not an `http(s)` link once surrounding whitespace
-  is trimmed (absent, empty, blank, or any other non-URL value) — fails closed
-  like the events file: a disposition nobody can read is not a disposition.
+- `demotion-acks.jsonl` — operator dispositions of those events. Hand-
+  maintained: no script writes it. Append one object per acknowledged event,
+  keyed on the same `(kind, merge_sha)` pair the event carries, with
+  `disposition_url` pointing at the judgement of record (the issue comment
+  disposing of it). `watch-demotion.sh` keeps reporting an acknowledged event
+  and never deletes its row; it only stops counting it toward the contrary
+  total that forces exit 1, so one dispositioned false positive cannot bury a
+  real second event under a permanently red watcher. Unacknowledged events
+  keep failing loud, and a malformed file — or a row whose `disposition_url`
+  is not an `http(s)` link once surrounding whitespace is trimmed (absent,
+  empty, blank, or any other non-URL value) — fails closed like the events
+  file: a disposition nobody can read is not a disposition.
 
   ```sh
   jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{acknowledged_at: $d,
     kind: "gate-regression", merge_sha: "<full merge sha>",
     disposition_url: "<url of the comment disposing of it>"}' \
     >>.artifacts/demotion-acks.jsonl
+  ```
+
+- `run-corrections.jsonl` — runs whose PR needed a delegated pre-merge
+  correction (a fix the verifying session made to the drain's output before
+  merge). Hand-maintained: whoever makes the correction appends the row, at
+  correction time; no script writes it. The C2 predicate's completion
+  definition is claim→implement→PR with no help, so `predicate-c2.sh`
+  excludes these runs from its **input set** — every aggregate (completion
+  count, window span, gate pass rate, revert count) then computes over
+  genuinely autonomous completions only. An unreadable file, or a row whose
+  `run_id` cannot be applied — absent, empty, or naming a run no joined row
+  carries (a typo) — fails closed rather than degrading to "nothing was
+  corrected".
+
+  ```sh
+  jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{corrected_at: $d,
+    run_id: "<run_id from the return-accounting record>",
+    pr_url: "<the corrected PR>", detail: "<what was corrected>"}' \
+    >>.artifacts/run-corrections.jsonl
   ```

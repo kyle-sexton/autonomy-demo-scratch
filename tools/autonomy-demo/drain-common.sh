@@ -227,6 +227,15 @@ DRAIN_DEMOTION_EVENTS="${DRAIN_DEMOTION_EVENTS:-${DRAIN_ARTIFACT_DIR}/demotion-e
 # shellcheck disable=SC2034  # consumed by watch-demotion.sh, which sources this lib
 DRAIN_DEMOTION_ACKS="${DRAIN_DEMOTION_ACKS:-${DRAIN_ARTIFACT_DIR}/demotion-acks.jsonl}"
 
+# Append-only log of runs whose PR needed a DELEGATED PRE-MERGE CORRECTION — a fix the
+# verifying session made to the drain's output before merge. Written at correction time by
+# whoever makes the correction (no script writes it); one object per corrected run, carrying
+# at minimum a run_id. The C2 predicate excludes these runs from its INPUT SET, because a run
+# that needed a hand off the autonomous path is not evidence of autonomous completion.
+# Overridable for tests.
+# shellcheck disable=SC2034  # consumed by predicate-c2.sh, which sources this lib
+DRAIN_RUN_CORRECTIONS="${DRAIN_RUN_CORRECTIONS:-${DRAIN_ARTIFACT_DIR}/run-corrections.jsonl}"
+
 drain_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # drain_binding_store_path — the OTel session store filesystem path derived from
@@ -427,6 +436,45 @@ drain_merge_is_mature() {
   else
     printf 'false\n'
   fi
+}
+
+# drain_corrected_run_map <corrections_file> <known_run_ids> — the set of runs that needed
+# a delegated pre-merge correction, as a compact JSON object {"<run_id>": true, ...}
+# predicate-c2.sh enriches each join row against (the same shape as its fire_attested
+# attest_map, and keyed the same way: run_id alone, which is globally unique — timestamp +
+# 4 random bytes, see drain_new_run_id). <known_run_ids> is the newline-separated set of
+# run_ids the map will actually be applied to (the join rows); EVERY correction must land
+# on one of them. Pure (jq over a local file); unit-tested off fixtures.
+#
+# Return contract:
+#   rc 0, {}   -> no corrections recorded (a MISSING file: the legitimate empty, and the
+#                 state every fresh checkout is in — `.artifacts/` is gitignored)
+#   rc 0, map  -> the corrected run_ids
+#   rc 3       -> UNDETERMINABLE. FAIL CLOSED, mirroring the other evidence-file contracts,
+#                 in three cases: the file is present but jq cannot parse it, a row carries
+#                 no non-empty run_id string, or a row names a run_id absent from
+#                 <known_run_ids>. The last two are ONE defect class — a correction that
+#                 cannot be applied to any row — and they matter because silently dropping
+#                 such a row lets the corrected run enrich to `corrected: false` and count
+#                 as an autonomous completion, the exact defect this file exists to
+#                 prevent. A hand-mistyped run_id is the likeliest way to reach it: this
+#                 file has no writer, so nothing but this check validates the key. An
+#                 unreadable — or unappliable — corrections file must never degrade to
+#                 "nothing was corrected".
+drain_corrected_run_map() {
+  local f="$1" known="$2" out rc
+  [[ -f "$f" ]] || { printf '{}\n'; return 0; }
+  out="$(jq -c -s --arg known "$known" '
+    ($known | split("\n") | map(select(length > 0))) as $ids
+    | if any(.[]; (.run_id // "") | (type != "string" or length == 0))
+      then error("row with no run_id")
+      elif any(.[]; (.run_id | IN($ids[]) | not))
+      then error("row naming an unknown run_id")
+      else map({(.run_id): true}) | add // {}
+      end' "$f" 2>/dev/null)"
+  rc=$?
+  [[ "$rc" -eq 0 && -n "$out" ]] || return 3
+  printf '%s\n' "$out"
 }
 
 # drain_reconcile_title <kind> <run_id> <issue> — the identity-carrying title a
