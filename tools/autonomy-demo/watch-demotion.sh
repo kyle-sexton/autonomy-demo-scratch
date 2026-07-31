@@ -115,7 +115,7 @@ record_event() {
     # rc 1 = unacknowledged (the default: stays contrary); rc 3 = acks file present but
     # unusable — fail closed rather than guessing, in either direction, at a human judgement.
     [[ "$rc" -eq 1 ]] \
-      || abort_failclosed "demotion-acks.jsonl unusable ($acks_file) — unparseable, or a matching row carries no disposition_url; acknowledgment of ${kind}/${merge_sha} undeterminable"
+      || abort_failclosed "demotion-acks.jsonl unusable ($acks_file) — unparseable, or a matching row carries no http(s) disposition_url; acknowledgment of ${kind}/${merge_sha} undeterminable"
     contrary_this_run=$((contrary_this_run + 1))
   fi
   if drain_demotion_already_recorded "$kind" "$merge_sha" "$events_file"; then

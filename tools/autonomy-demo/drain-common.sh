@@ -562,21 +562,29 @@ drain_demotion_already_recorded() {
 # total that forces watch-demotion.sh to exit 1, which is what keeps ONE dispositioned
 # false positive from burying a real second event under permanent alarm fatigue.
 # Return contract — the caller MUST distinguish these:
-#   rc 0 -> acknowledged (a matching row exists and carries a non-empty disposition_url)
+#   rc 0 -> acknowledged (a matching row exists and its disposition_url is, after trimming
+#           surrounding whitespace, an http(s) URL — the documented judgement-of-record link)
 #   rc 1 -> NOT acknowledged (no matching row, or a missing file — nothing acked yet);
 #           the event stays contrary and keeps failing loud, which is the default
 #   rc 3 -> UNDETERMINABLE. FAIL CLOSED (caller aborts), mirroring the events-file
 #           contract, in two cases: the acks file is present but jq cannot parse it
-#           (corrupt/truncated write), or a matching row carries no non-empty
-#           disposition_url string — a disposition without a disposition of record is not
-#           one, and silently honouring it would let an empty row mute a real event.
+#           (corrupt/truncated write), or a matching row carries no usable disposition_url
+#           — a disposition without a disposition of record is not one, and silently
+#           honouring it would let an empty row mute a real event. NON-EMPTY IS NOT
+#           ENOUGH: this file is hand-maintained, so a whitespace-only or otherwise
+#           non-URL value is the same "nowhere to read the judgement" state as an empty
+#           one, and accepting it would mute a real alarm with an unusable link. The form
+#           checked is deliberately just the http(s) scheme README documents — narrowing
+#           it further (to a host, or to a #issuecomment- fragment) would invent a
+#           false-close mode for links the operator legitimately dispositions against.
 drain_demotion_acknowledged() {
   local kind="$1" merge_sha="$2" f="$3" verdict rc
   [[ -f "$f" ]] || return 1
   verdict="$(jq -r -n --arg k "$kind" --arg m "$merge_sha" --slurpfile rows "$f" '
     [$rows[] | select(.kind == $k and .merge_sha == $m)] as $hits
     | if ($hits | length) == 0 then "none"
-      elif ($hits | all((.disposition_url // "") | type == "string" and length > 0)) then "acked"
+      elif ($hits | all((.disposition_url // "") | type == "string"
+              and (gsub("^\\s+|\\s+$"; "") | test("^https?://\\S+$")))) then "acked"
       else "incomplete"
       end' 2>/dev/null)"
   rc=$?

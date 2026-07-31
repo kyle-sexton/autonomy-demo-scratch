@@ -462,12 +462,30 @@ assert_eq "demotion ack: corrupt acks file FAILS CLOSED (rc 3, not 1)" \
 acks_f="$dedup_tmp/demotion-acks.jsonl"
 { jq -cn '{kind:"revert", merge_sha:"nourl"}'
   jq -cn '{kind:"revert", merge_sha:"emptyurl", disposition_url:""}'
+  jq -cn '{kind:"revert", merge_sha:"blankurl", disposition_url:"   "}'
+  jq -cn '{kind:"revert", merge_sha:"notaurl", disposition_url:"disposed of in standup"}'
+  jq -cn '{kind:"revert", merge_sha:"numericurl", disposition_url:42}'
+  jq -cn '{kind:"revert", merge_sha:"paddedurl",
+    disposition_url:"  https://x/issues/1#issuecomment-3  "}'
   jq -cn '{kind:"gate-regression", merge_sha:"feedface",
     disposition_url:"https://x/issues/1#issuecomment-2"}'; } >>"$acks_f"
 assert_eq "demotion ack: matching row with NO disposition_url FAILS CLOSED (rc 3)" \
   "$(ack_rc revert nourl "$acks_f")" "3"
 assert_eq "demotion ack: matching row with an EMPTY disposition_url FAILS CLOSED (rc 3)" \
   "$(ack_rc revert emptyurl "$acks_f")" "3"
+# Non-empty is not enough: this file is hand-maintained, and a value that is not a usable
+# link is the same "nowhere to read the judgement" state an empty one is — muting a real
+# alarm on it is the failure mode the fail-closed contract exists to prevent.
+assert_eq "demotion ack: WHITESPACE-ONLY disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert blankurl "$acks_f")" "3"
+assert_eq "demotion ack: NON-URL disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert notaurl "$acks_f")" "3"
+assert_eq "demotion ack: NON-STRING disposition_url FAILS CLOSED (rc 3)" \
+  "$(ack_rc revert numericurl "$acks_f")" "3"
+# ...but a real link the operator pasted with stray surrounding whitespace IS a
+# disposition of record: trim first, then judge the form.
+assert_eq "demotion ack: a URL padded with whitespace is trimmed and acknowledged (rc 0)" \
+  "$(ack_rc revert paddedurl "$acks_f")" "0"
 assert_eq "demotion ack: a well-formed row among incomplete ones is still acknowledged" \
   "$(ack_rc gate-regression feedface "$acks_f")" "0"
 

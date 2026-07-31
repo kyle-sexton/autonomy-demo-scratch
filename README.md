@@ -59,7 +59,9 @@ Evidence files under `.artifacts/`:
   toward the contrary total that forces exit 1, so one dispositioned false
   positive cannot bury a real second event under a permanently red watcher.
   Unacknowledged events keep failing loud, and a malformed file — or a row
-  with no `disposition_url` — fails closed like the events file.
+  whose `disposition_url` is not an `http(s)` link once surrounding whitespace
+  is trimmed (absent, empty, blank, or any other non-URL value) — fails closed
+  like the events file: a disposition nobody can read is not a disposition.
 
   ```sh
   jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{acknowledged_at: $d,
