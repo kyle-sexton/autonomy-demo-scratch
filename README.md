@@ -35,6 +35,8 @@ Evidence: melodic-software/claude-code-plugins#356 and #372.
   backup folder and prunes to the last N snapshots.
 - `watch-demotion.sh` — post-merge demotion net: gate re-check on drained
   merges plus revert scan, appends `demotion-events.jsonl`, fail-closed.
+  Events the operator has dispositioned in `demotion-acks.jsonl` are still
+  reported but no longer force a non-zero exit.
 - `detect-missed-fire.sh` — deterministic, zero-token missed-fire detector
   (Phase 2 item 4, re-specced against the bound 15-min slot grid per scratch#66;
   wiring into a live scheduled task stays Phase 4): scans outer-session
@@ -49,6 +51,26 @@ Evidence files under `.artifacts/`:
   by `attest-fire-origin.sh --record`.
 - `demotion-events.jsonl` — post-merge demotion events, appended by
   `watch-demotion.sh`.
+- `demotion-acks.jsonl` — operator dispositions of those events. Hand-
+  maintained: no script writes it. Append one object per acknowledged event,
+  keyed on the same `(kind, merge_sha)` pair the event carries, with
+  `disposition_url` pointing at the judgement of record (the issue comment
+  disposing of it). `watch-demotion.sh` keeps reporting an acknowledged event
+  and never deletes its row; it only stops counting it toward the contrary
+  total that forces exit 1, so one dispositioned false positive cannot bury a
+  real second event under a permanently red watcher. Unacknowledged events
+  keep failing loud, and a malformed file — or a row whose `disposition_url`
+  is not an `http(s)` link once surrounding whitespace is trimmed (absent,
+  empty, blank, or any other non-URL value) — fails closed like the events
+  file: a disposition nobody can read is not a disposition.
+
+  ```sh
+  jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{acknowledged_at: $d,
+    kind: "gate-regression", merge_sha: "<full merge sha>",
+    disposition_url: "<url of the comment disposing of it>"}' \
+    >>.artifacts/demotion-acks.jsonl
+  ```
+
 - `run-corrections.jsonl` — runs whose PR needed a delegated pre-merge
   correction (a fix the verifying session made to the drain's output before
   merge). Hand-maintained: whoever makes the correction appends the row, at
