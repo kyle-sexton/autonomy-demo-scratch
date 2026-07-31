@@ -35,9 +35,20 @@
 # re-DETECTED and still forces a non-zero exit (a watcher that exits 0 while a revert sits
 # in main would be a false clean).
 #
+# Acknowledgment. Re-detection alone would make ONE dispositioned false positive fail every
+# future run forever — permanent alarm fatigue that buries a REAL second event, the failure
+# this net exists to prevent. So an operator-maintained, append-only
+# demotion-acks.jsonl (kind, merge_sha, disposition_url) carries the human's judgement of an
+# event back to the watcher: an acknowledged event is still DETECTED, still recorded, and
+# still REPORTED in the summary — it is only excluded from the contrary count that forces
+# exit 1. Unacknowledged events keep failing loud, which stays the default; the watcher
+# never writes this file, and a malformed one fails closed exactly like the events file.
+#
 # Exit codes:
-#   0  clean       — no contrary event detected THIS run (all-clear line reports counts)
-#   1  demotion    — one or more contrary events detected this run (loud one-line summary)
+#   0  clean       — no UNACKNOWLEDGED contrary event detected THIS run (all-clear line
+#                    reports counts, including acknowledged events re-detected this run)
+#   1  demotion    — one or more unacknowledged contrary events detected this run (loud
+#                    one-line summary)
 #   2  usage
 #   3  fail-closed — unreachable API / unreadable git range / unparseable evidence; NEVER
 #                    reads as clean (evidence completeness is required for a promotion net)
@@ -67,6 +78,7 @@ abort_failclosed() {
 owner_repo="$(drain_owner_repo)"
 mkdir -p "$DRAIN_ARTIFACT_DIR"
 events_file="$DRAIN_DEMOTION_EVENTS"
+acks_file="$DRAIN_DEMOTION_ACKS"
 
 # Enumerate complete drain runs. Malformed evidence FAILS CLOSED (contrast predicate-c2.sh,
 # which fail-softs to "not eligible"): a watcher that cannot parse its own evidence must
@@ -84,14 +96,28 @@ if [[ "$n" -gt 0 ]]; then
 fi
 
 merges_checked=0
-events_this_run=0
+contrary_this_run=0
+acked_this_run=0
 
-# record_event <kind> <merge_sha> <pr_url> <run_id> <detail>. Counts every DETECTED
-# contrary event (so a still-standing but already-recorded event still forces non-zero),
-# then appends the row only when (kind, merge_sha) is not already logged (idempotent).
+# record_event <kind> <merge_sha> <pr_url> <run_id> <detail>. Every DETECTED contrary event
+# is routed to exactly one counter — acknowledged (reported only) or contrary (forces
+# non-zero, so a still-standing unacknowledged event keeps failing even once recorded) —
+# then the row is appended only when (kind, merge_sha) is not already logged (idempotent).
+# The ack decides the COUNTER, never the append: the events log is the record of detection,
+# the acks file the record of disposition, and neither stands in for the other.
 record_event() {
   local kind="$1" merge_sha="$2" pr_url="$3" run_id="$4" detail="$5" rc
-  events_this_run=$((events_this_run + 1))
+  if drain_demotion_acknowledged "$kind" "$merge_sha" "$acks_file"; then
+    acked_this_run=$((acked_this_run + 1))
+    echo "watch-demotion: ${kind} for merge ${merge_sha:0:12} is ACKNOWLEDGED in ${acks_file} — reported, not counted contrary" >&2
+  else
+    rc=$?
+    # rc 1 = unacknowledged (the default: stays contrary); rc 3 = acks file present but
+    # unusable — fail closed rather than guessing, in either direction, at a human judgement.
+    [[ "$rc" -eq 1 ]] \
+      || abort_failclosed "demotion-acks.jsonl unusable ($acks_file) — unparseable, or a matching row carries no http(s) disposition_url; acknowledgment of ${kind}/${merge_sha} undeterminable"
+    contrary_this_run=$((contrary_this_run + 1))
+  fi
   if drain_demotion_already_recorded "$kind" "$merge_sha" "$events_file"; then
     echo "watch-demotion: ${kind} for merge ${merge_sha} already recorded — not duplicating row" >&2
     return 0
@@ -162,15 +188,16 @@ while [[ "$i" -lt "$n" ]]; do
   fi
 done
 
-# Historical total: every event ever logged (this run appended none when events_this_run
-# is 0, so this counts prior events only on the all-clear path). grep -c counts lines
-# robustly whether or not the file ends in a newline; never a raw byte count.
+# Historical total: every event ever logged, counted AFTER this run's appends (an
+# acknowledged event detected for the first time is recorded and still exits 0, so the
+# all-clear path can include a row appended this run). grep -c counts lines robustly
+# whether or not the file ends in a newline; never a raw byte count.
 historical=0
 [[ -f "$events_file" ]] && historical="$(grep -c '' "$events_file" 2>/dev/null || printf 0)"
 
-if [[ "$events_this_run" -gt 0 ]]; then
-  echo "watch-demotion: DEMOTION — ${events_this_run} contrary event(s) across ${merges_checked} merge(s) checked; see ${events_file}" >&2
+if [[ "$contrary_this_run" -gt 0 ]]; then
+  echo "watch-demotion: DEMOTION — ${contrary_this_run} unacknowledged contrary event(s) (${acked_this_run} acknowledged) across ${merges_checked} merge(s) checked; see ${events_file}" >&2
   exit "$EXIT_DEMOTION"
 fi
-echo "watch-demotion: all clear — ${merges_checked} merge(s) checked, 0 contrary this run, ${historical} event(s) recorded historically"
+echo "watch-demotion: all clear — ${merges_checked} merge(s) checked, 0 unacknowledged contrary this run, ${acked_this_run} acknowledged event(s) re-detected, ${historical} event(s) recorded historically"
 exit 0
