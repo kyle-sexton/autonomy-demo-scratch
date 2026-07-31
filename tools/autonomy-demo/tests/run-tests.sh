@@ -19,8 +19,8 @@
 #      judgeability boundary, the cadence-flip floor, window-independent dedup
 #      identity, and the evidence-proven activation floor.
 #   14. drain_corrected_run_map — the corrected-run set the C2 predicate excludes from
-#      its input set (scratch#60), incl. the fail-closed contract on a corrupt file or a
-#      row naming no run.
+#      its input set (scratch#60), incl. the fail-closed contract on a corrupt file, a
+#      row naming no run, and a row naming a run no join row carries.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -566,9 +566,12 @@ assert_eq "missed-fire: an off-hour fire proves activation and re-enables judgem
 # belongs here, in the tier the gate actually runs.
 corr_tmp="$(mktemp -d)"
 trap 'rm -rf "$revrepo" "$attest_tmp" "$dedup_tmp" "$missed_tmp" "$corr_tmp"' EXIT
-corr_map() { # <file> — the map, or "rc=<n>" when the helper fails closed
+corr_known=$'scheduled-A\nscheduled-B\nscheduled-C'
+corr_map() { # <file> [<known_run_ids>] — the map, or "rc=<n>" when the helper fails closed
   local out
-  if out="$(drain_corrected_run_map "$1")"; then printf '%s' "$out"; else printf 'rc=%s' "$?"; fi
+  if out="$(drain_corrected_run_map "$1" "${2-$corr_known}")"; then
+    printf '%s' "$out"
+  else printf 'rc=%s' "$?"; fi
 }
 assert_eq "corrected runs: missing file yields the empty map (rc 0) — the fresh-checkout state" \
   "$(corr_map "$corr_tmp/absent.jsonl")" "{}"
@@ -598,6 +601,22 @@ corr_emptyrun="$corr_tmp/empty-run-id.jsonl"
 jq -cn '{corrected_at:"2026-07-22T04:00:00Z", run_id:""}' >>"$corr_emptyrun"
 assert_eq "corrected runs: a row with an EMPTY run_id FAILS CLOSED (rc 3)" \
   "$(corr_map "$corr_emptyrun")" "rc=3"
+# Same defect class, and the likeliest one in practice: this file has no writer, so a
+# hand-mistyped run_id is caught by nothing else. It would enrich no join row, leave the
+# run it meant to exclude at `corrected: false`, and let it count toward C2 — so a
+# correction that matches no join row is unappliable evidence and fails closed too.
+corr_typo="$corr_tmp/typo-run-id.jsonl"
+{ jq -cn '{corrected_at:"2026-07-22T03:00:00Z", run_id:"scheduled-A"}'
+  jq -cn '{corrected_at:"2026-07-22T04:00:00Z", run_id:"schedulde-B"}'; } >>"$corr_typo"
+assert_eq "corrected runs: a row naming a run NO join row carries FAILS CLOSED (rc 3)" \
+  "$(corr_map "$corr_typo")" "rc=3"
+assert_eq "corrected runs: every correction applied to a join row still yields the map" \
+  "$(corr_map "$corr_f" $'scheduled-A\nscheduled-B')" '{"scheduled-A":true,"scheduled-B":true}'
+# The join set carries several rows per run; the caller de-duplicates, and a repeated id
+# must not change the verdict either way.
+assert_eq "corrected runs: a repeated known run_id is still applied (rc 0)" \
+  "$(corr_map "$corr_f" $'scheduled-A\nscheduled-B\nscheduled-A')" \
+  '{"scheduled-A":true,"scheduled-B":true}'
 
 # --- summary ----------------------------------------------------------------
 printf '\n1..%d\n' "$tests_run"

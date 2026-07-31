@@ -56,8 +56,10 @@ Evidence files under `.artifacts/`:
   definition is claim→implement→PR with no help, so `predicate-c2.sh`
   excludes these runs from its **input set** — every aggregate (completion
   count, window span, gate pass rate, revert count) then computes over
-  genuinely autonomous completions only. An unreadable file, or a row naming
-  no run, fails closed rather than degrading to "nothing was corrected".
+  genuinely autonomous completions only. An unreadable file, or a row whose
+  `run_id` cannot be applied — absent, empty, or naming a run no joined row
+  carries (a typo) — fails closed rather than degrading to "nothing was
+  corrected".
 
   ```sh
   jq -cn --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{corrected_at: $d,

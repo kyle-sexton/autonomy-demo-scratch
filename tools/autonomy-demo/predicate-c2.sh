@@ -138,8 +138,17 @@ mv "${join_all}.mature" "$join_all"
 # Like fire_attested and completion_mature, the column must be on EVERY row — duckdb
 # infers the schema from these rows, and a first row missing it would drop the column and
 # make the SQL's `corrected = false` filter a binder error.
-if ! corrected_map="$(drain_corrected_run_map "$DRAIN_RUN_CORRECTIONS")"; then
-  echo "predicate-c2: FATAL run-corrections.jsonl unusable ($DRAIN_RUN_CORRECTIONS) — unparseable, or a row carries no run_id; corrected-run exclusion undeterminable — aborting" >&2
+#
+# The join rows' own run_ids are handed to the map builder so every correction is proven
+# APPLICABLE, not merely well-formed: this file is hand-maintained, so a mistyped run_id
+# would otherwise enrich nothing, leave the actually-corrected run at `corrected: false`,
+# and let it count toward C2 — the silent miscount this whole filter removes. A correction
+# naming a run absent from the join set is therefore evidence breakage and aborts too.
+# `tr -d '\r'` guards jq.exe's Windows CRLF at this boundary (as above); sort -u because a
+# run legitimately contributes several join rows.
+join_run_ids="$(jq -r '.run_id // empty' "$join_all" | tr -d '\r' | sort -u)"
+if ! corrected_map="$(drain_corrected_run_map "$DRAIN_RUN_CORRECTIONS" "$join_run_ids")"; then
+  echo "predicate-c2: FATAL run-corrections.jsonl unusable ($DRAIN_RUN_CORRECTIONS) — unparseable, a row carries no run_id, or a row names a run_id no join row carries (mistyped?); corrected-run exclusion undeterminable — aborting" >&2
   exit 1
 fi
 jq -c --argjson m "$corrected_map" '. + {corrected: ($m[.run_id] // false)}' \
