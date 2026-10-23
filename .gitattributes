@@ -6,3 +6,4 @@
 *.jsonl text eol=lf
 *.md text eol=lf
 *.toml text eol=lf
+.githooks/** text eol=lf
