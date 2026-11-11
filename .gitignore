@@ -1,1 +1,4 @@
 .artifacts/
+
+# Personal overrides beside tracked convention layers (docs/conventions/work-items.local.yaml)
+docs/conventions/**/*.local.*
